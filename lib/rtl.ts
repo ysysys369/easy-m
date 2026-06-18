@@ -7,24 +7,19 @@
  * - Dev/Prod builds (native RTL works via I18nManager)
  *
  * ══════════════════════════════════════════════════════════════════════════════
- * THE BREAKTHROUGH DISCOVERY:
+ * CURRENT APPROACH:
  * ══════════════════════════════════════════════════════════════════════════════
  *
- * In native RTL mode (I18nManager.isRTL = true), React Native AUTOMATICALLY FLIPS
- * certain style properties:
- *
- *   - textAlign="right" → gets flipped to → textAlign="left"  (WRONG!)
- *   - textAlign="left"  → gets flipped to → textAlign="right" (What we want!)
- *   - flexDirection="row" → gets flipped to → flexDirection="row-reverse" (Correct!)
- *
- * So the solution is to provide INVERSE VALUES in native RTL mode:
+ * Hebrew text is always explicitly right-aligned. Horizontal UI rows use an
+ * environment-aware flexDirection so Expo Go and native builds both render with
+ * the first logical item on the right.
  *
  * ┌─────────────┬───────────────────┬───────────────┬──────────────────┐
  * │ Environment │ rtl.textAlign     │ Native Flips? │ Final Result     │
  * ├─────────────┼───────────────────┼───────────────┼──────────────────┤
  * │ Expo Go     │ "right"           │ No            │ RIGHT ✅         │
- * │ Dev Build   │ "left"            │ Yes → "right" │ RIGHT ✅         │
- * │ Prod Build  │ "left"            │ Yes → "right" │ RIGHT ✅         │
+ * │ Dev Build   │ "right"           │ N/A           │ RIGHT ✅         │
+ * │ Prod Build  │ "right"           │ N/A           │ RIGHT ✅         │
  * └─────────────┴───────────────────┴───────────────┴──────────────────┘
  *
  * ┌─────────────┬───────────────────┬───────────────┬──────────────────┐
@@ -54,6 +49,7 @@
  */
 
 import Constants from 'expo-constants';
+import type { DimensionValue, ViewStyle } from 'react-native';
 import { I18nManager } from 'react-native';
 
 // ═══════════════════════════════════════════════════════════════
@@ -106,26 +102,22 @@ export const needsExplicitRTL = (): boolean => APP_IS_RTL && !I18nManager.isRTL;
 /**
  * Get text alignment for Hebrew/RTL content.
  *
- * THE KEY INSIGHT:
- * In native RTL mode, textAlign="right" gets FLIPPED to "left" automatically!
+ * ┌─────────────┬───────────────────┬───────────────┬──────────────────┐
+ * │ Environment │ returns           │ Native Flips? │ Final Result     │
+ * ├─────────────┼───────────────────┼───────────────┼──────────────────┤
+ * │ Expo Go     │ "right"           │ No            │ RIGHT ✅         │
+ * │ Native RTL  │ "left"            │ Yes → right   │ RIGHT ✅         │
+ * └─────────────┴───────────────────┴───────────────┴──────────────────┘
  *
- * So we need INVERSE logic:
- * - Expo Go (no native RTL): return "right" → stays "right" ✅
- * - Dev Build (native RTL): return "left" → gets flipped to "right" ✅
- *
- * @returns "right" | "left" | undefined
+ * Mirrors the logic of getFlexDirection(): in native RTL the system flips
+ * logical values, so we pass the inverse of the desired physical result.
  */
 export const getTextAlign = (): 'right' | 'left' | undefined => {
+  if (!APP_IS_RTL) return undefined;
   if (needsExplicitRTL()) {
-    // Expo Go: no native RTL active, explicitly set "right"
-    return 'right';
+    return 'right'; // Expo Go: no native flip, 'right' = physical right
   }
-  // Dev/Prod Build with native RTL: textAlign values get FLIPPED!
-  // We use "left" which gets flipped to "right" by the native system
-  if (I18nManager.isRTL) {
-    return 'left';
-  }
-  return undefined;
+  return 'left'; // Native RTL: system flips 'left' to physical right
 };
 
 /**
@@ -167,9 +159,7 @@ export const getFlexDirection = (): 'row' | 'row-reverse' => {
  */
 export const rtl = {
   /**
-   * Environment-aware text alignment.
-   * - Expo Go: "right"
-   * - Native RTL: "left" (gets flipped to "right")
+   * Hebrew text alignment.
    */
   get textAlign(): 'right' | 'left' | undefined {
     return getTextAlign();
@@ -314,9 +304,9 @@ export const spacing = {
  * Position utilities that respect RTL direction
  */
 export const position = {
-  start: (value: number) =>
+  start: (value: DimensionValue): ViewStyle =>
     needsExplicitRTL() ? { right: value } : { left: value },
-  end: (value: number) =>
+  end: (value: DimensionValue): ViewStyle =>
     needsExplicitRTL() ? { left: value } : { right: value },
 };
 

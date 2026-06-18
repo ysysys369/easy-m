@@ -1,23 +1,14 @@
 // ============================================================================
 // קישורים משפטיים
 // ============================================================================
-// קובץ זה מכיל את הקישורים למסמכים המשפטיים של האפליקציה
-// עדכן את הקישורים לפני הפצה לחנויות
+// הגדרות ה-URL הפעילות נמצאות ב-config/appConfig.ts (TERMS_URL, PRIVACY_URL).
+// קובץ זה מספק חלופה עם תמיכה ב-EXPO_PUBLIC_ env vars.
+// עדכן את הקישורים לפני הפצה לחנויות.
 
-/**
- * קישור למדיניות הפרטיות
- * ⚠️ חובה: עדכן את הקישור הזה לכתובת האמיתית של מדיניות הפרטיות שלך
- * הקישור חייב להיות נגיש בפומבי (לא רק בתוך האפליקציה)
- */
 export const PRIVACY_POLICY_URL =
   process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL ||
-  'https://yourdomain.com/privacy-policy';
+  'https://docs.google.com/document/d/12NuX5iPw1qVLcbe3_XVPiVseot2YxiXgiSn7vJq--CE/edit?usp=sharing';
 
-/**
- * קישור לתנאי השימוש
- * ⚠️ חובה: עדכן את הקישור הזה לכתובת האמיתית של תנאי השימוש שלך
- * הקישור חייב להיות נגיש בפומבי (לא רק בתוך האפליקציה)
- */
 export const TERMS_OF_SERVICE_URL =
   process.env.EXPO_PUBLIC_TERMS_OF_SERVICE_URL ||
-  'https://yourdomain.com/terms-of-service';
+  'https://docs.google.com/document/d/1MItfjzwqCUCRHeyggID3fvmNE1NvP6JNk_igNM9gozo/edit?usp=sharing';

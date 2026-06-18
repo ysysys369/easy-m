@@ -19,7 +19,8 @@
         "ExpoLocalization_supportsRTL": true,
         "ExpoLocalization_forcesRTL": true
       },
-      "bundleIdentifier": "com.yanir.easym.app"
+      "bundleIdentifier": "com.yanir.easym.app",
+      "appleTeamId": "7K34LH2T5S"
     },
     "android": {
       "adaptiveIcon": {
@@ -49,7 +50,8 @@
           "supportsRTL": true,
           "forcesRTL": true
         }
-      ]
+      ],
+      "./plugins/withoutPushNotifications"
     ],
     "experiments": {
       "typedRoutes": true

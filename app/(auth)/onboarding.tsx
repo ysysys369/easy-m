@@ -1,18 +1,10 @@
-import { useMutation } from 'convex/react';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+import { ChevronRight } from 'lucide-react-native';
+import { useEffect, useRef, useState } from 'react';
 import {
-  CheckCircle2,
-  Clock,
-  Sparkles,
-  TrendingUp,
-  Zap,
-} from 'lucide-react-native';
-import { useRef, useState } from 'react';
-import {
-  ActivityIndicator,
   Animated,
-  Dimensions,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
+  Image,
   Pressable,
   ScrollView,
   Text,
@@ -20,909 +12,911 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { api } from '@/convex/_generated/api';
+import { rtl } from '@/lib/rtl';
 
-// ─── קבועים ─────────────────────────────────────────────────────────────────
-const SCREEN_W = Dimensions.get('window').width;
-
+// ─── Colors ───────────────────────────────────────────────────────────────────
 const C = {
   bg:          '#0a0a0a',
   card:        '#111114',
   purple:      '#7C3AED',
-  purpleFaint: 'rgba(124,58,237,0.12)',
-  purpleBdr:   'rgba(124,58,237,0.35)',
+  purpleLight: '#a78bfa',
+  purpleFaint: 'rgba(124,58,237,0.13)',
   purpleMid:   'rgba(124,58,237,0.22)',
+  purpleBdr:   'rgba(124,58,237,0.38)',
   purpleDeep:  '#5b21b6',
   border:      'rgba(63,63,70,0.55)',
-  textSub:     '#52525b',
   textMid:     '#71717a',
   textLight:   '#a1a1aa',
+  white:       '#ffffff',
 };
 
-// ─── נתוני carousel ──────────────────────────────────────────────────────────
-const SLIDES = [
-  {
-    icon:     Zap,
-    bg:       'rgba(124,58,237,0.14)',
-    glow:     'rgba(124,58,237,0.30)',
-    title:    'צור פוסטים לעסק שלך\nבשניות ⚡',
-    subtitle: 'AI חכם שמייצר תוכן שמביא לקוחות',
-    tag:      'יצירת תוכן',
-  },
-  {
-    icon:     Clock,
-    bg:       'rgba(99,102,241,0.14)',
-    glow:     'rgba(99,102,241,0.28)',
-    title:    'חסוך שעות עבודה\nכל שבוע',
-    subtitle: 'אנחנו יוצרים את התוכן – אתה מתמקד בעסק',
-    tag:      'חיסכון בזמן',
-  },
-  {
-    icon:     TrendingUp,
-    bg:       'rgba(139,92,246,0.14)',
-    glow:     'rgba(139,92,246,0.28)',
-    title:    'יותר לקוחות,\nפחות מאמץ',
-    subtitle: 'תוכן מקצועי שמגדיל חשיפה ומכירות',
-    tag:      'צמיחה',
-  },
-];
+// 0=Welcome 1=WhatsEasyM 2=Pain 3=Value 4=Consistency 5=Benefit 6=Personalization 7=FinalCTA
+type OnboardingStep = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+const TOTAL_STEPS = 8;
 
-// ─── נתוני שאלות ─────────────────────────────────────────────────────────────
-const QUIZ: {
-  id: string;
-  question: string;
-  type: 'single' | 'multi';
-  options: { label: string; value: string }[];
-}[] = [
-  {
-    id: 'industry',
-    question: 'במה אתה עוסק?',
-    type: 'single',
-    options: [
-      { label: '🍕  מסעדה / בית קפה',    value: 'restaurant' },
-      { label: '💪  כושר ובריאות',        value: 'fitness'    },
-      { label: '💆  קוסמטיקה ויופי',      value: 'beauty'     },
-      { label: '🏠  נדל״ן',               value: 'realestate' },
-      { label: '🌟  אחר',                 value: 'other'      },
-    ],
-  },
-  {
-    id: 'published',
-    question: 'האם ניסית לפרסם בעבר?',
-    type: 'single',
-    options: [
-      { label: '✅  כן, ניסיתי',          value: 'yes' },
-      { label: '❌  לא עדיין',            value: 'no'  },
-    ],
-  },
-  {
-    id: 'challenge',
-    question: 'מה הכי קשה לך?',
-    type: 'single',
-    options: [
-      { label: '⏰  אין זמן',             value: 'time'    },
-      { label: '💡  אין רעיונות',         value: 'ideas'   },
-      { label: '📉  אין תוצאות',          value: 'results' },
-    ],
-  },
-  {
-    id: 'platforms',
-    question: 'איפה אתה מפרסם?',
-    type: 'multi',
-    options: [
-      { label: '📸  אינסטגרם', value: 'instagram' },
-      { label: '🔵  פייסבוק',  value: 'facebook'  },
-      { label: '🎵  טיקטוק',   value: 'tiktok'    },
-    ],
-  },
+const PAIN_OPTIONS = [
+  'אין לי רעיונות לפוסטים',
+  'אין לי זמן לעצב',
+  'אני לא יודע מה לכתוב',
+  'אני לא מפרסם מספיק',
 ];
-
-// ─── סוגי שלבים ──────────────────────────────────────────────────────────────
-type Phase = 'carousel' | 'quiz' | 'paywall';
-type QuizAnswers = Record<string, string | string[]>;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN SCREEN
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function OnboardingScreen() {
-  const [phase,        setPhase]        = useState<Phase>('carousel');
-  const [slideIndex,   setSlideIndex]   = useState(0);
-  const [quizStep,     setQuizStep]     = useState(0);
-  const [quizAnswers,  setQuizAnswers]  = useState<QuizAnswers>({});
-  const [isSaving,     setIsSaving]     = useState(false);
+  const router       = useRouter();
+  const [step,         setStep]        = useState<OnboardingStep>(0);
+  const [selectedPain, setSelectedPain] = useState<string | null>(null);
 
-  const saveAnswers = useMutation(api.onboardingAnswers.saveOnboardingAnswers);
+  const stepOpacity = useRef(new Animated.Value(1)).current;
+  const stepTransY  = useRef(new Animated.Value(0)).current;
 
-  // אנימציות מעבר בין שלבים
-  const phaseOpacity = useRef(new Animated.Value(1)).current;
-  const phaseTransY  = useRef(new Animated.Value(0)).current;
-
-  // אנימציית שאלה בתוך quiz
-  const qOpacity   = useRef(new Animated.Value(1)).current;
-  const qTranslate = useRef(new Animated.Value(0)).current;
-
-  const carouselRef = useRef<ScrollView>(null);
-
-  // ─── מעבר בין phases ──────────────────────────────────────────────────────
-  const goToPhase = (next: Phase) => {
+  const goToStep = (next: OnboardingStep, dir: 'forward' | 'back' = 'forward') => {
+    const outY = dir === 'forward' ? -18 : 18;
+    const inY  = dir === 'forward' ?  22 : -22;
     Animated.parallel([
-      Animated.timing(phaseOpacity, { toValue: 0, duration: 220, useNativeDriver: true }),
-      Animated.timing(phaseTransY,  { toValue: -18, duration: 220, useNativeDriver: true }),
+      Animated.timing(stepOpacity, { toValue: 0,    duration: 180, useNativeDriver: true }),
+      Animated.timing(stepTransY,  { toValue: outY, duration: 180, useNativeDriver: true }),
     ]).start(() => {
-      setPhase(next);
-      if (next === 'quiz') { setQuizStep(0); qOpacity.setValue(1); qTranslate.setValue(0); }
-      phaseTransY.setValue(20);
+      setStep(next);
+      stepTransY.setValue(inY);
       Animated.parallel([
-        Animated.timing(phaseOpacity, { toValue: 1, duration: 320, useNativeDriver: true }),
-        Animated.spring(phaseTransY,  { toValue: 0, useNativeDriver: true, speed: 50, bounciness: 4 }),
+        Animated.timing(stepOpacity, { toValue: 1, duration: 280, useNativeDriver: true }),
+        Animated.spring(stepTransY,  { toValue: 0, useNativeDriver: true, speed: 52, bounciness: 5 }),
       ]).start();
     });
   };
 
-  // ─── מעבר בין שאלות ───────────────────────────────────────────────────────
-  const nextQuestion = (nextStep: number) => {
-    Animated.parallel([
-      Animated.timing(qOpacity,    { toValue: 0, duration: 180, useNativeDriver: true }),
-      Animated.timing(qTranslate,  { toValue: -SCREEN_W * 0.25, duration: 180, useNativeDriver: true }),
-    ]).start(() => {
-      setQuizStep(nextStep);
-      qTranslate.setValue(SCREEN_W * 0.25);
-      Animated.parallel([
-        Animated.timing(qOpacity,   { toValue: 1, duration: 260, useNativeDriver: true }),
-        Animated.spring(qTranslate, { toValue: 0, useNativeDriver: true, speed: 50, bounciness: 3 }),
-      ]).start();
-    });
-  };
+  const advance = () => goToStep(((step + 1) as OnboardingStep), 'forward');
+  const goBack  = () => step > 0 && goToStep(((step - 1) as OnboardingStep), 'back');
 
-  // ─── carousel: עדכון dot ──────────────────────────────────────────────────
-  const onCarouselScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const idx = Math.round(e.nativeEvent.contentOffset.x / SCREEN_W);
-    setSlideIndex(idx);
-  };
+  const showBackButton = step >= 1 && step <= 6;
 
-  const handleCarouselNext = () => {
-    if (slideIndex < SLIDES.length - 1) {
-      carouselRef.current?.scrollTo({ x: (slideIndex + 1) * SCREEN_W, animated: true });
-    } else {
-      goToPhase('quiz');
-    }
-  };
-
-  // ─── quiz: בחירת תשובה ────────────────────────────────────────────────────
-  const selectAnswer = (questionId: string, value: string, type: 'single' | 'multi') => {
-    setQuizAnswers((prev) => {
-      if (type === 'single') {
-        return { ...prev, [questionId]: value };
-      }
-      const current = (prev[questionId] as string[]) || [];
-      const exists  = current.includes(value);
-      return {
-        ...prev,
-        [questionId]: exists ? current.filter((v) => v !== value) : [...current, value],
-      };
-    });
-  };
-
-  const isAnswered = (q: (typeof QUIZ)[number]): boolean => {
-    const ans = quizAnswers[q.id];
-    if (q.type === 'single') return typeof ans === 'string' && ans.length > 0;
-    return Array.isArray(ans) && ans.length > 0;
-  };
-
-  const handleQuizNext = async () => {
-    if (quizStep < QUIZ.length - 1) {
-      nextQuestion(quizStep + 1);
-      return;
-    }
-    // שאלה אחרונה — שמירה ב-DB לפני מעבר ל-paywall
-    setIsSaving(true);
-    try {
-      await saveAnswers({
-        businessType:    typeof quizAnswers.industry  === 'string' ? quizAnswers.industry  : undefined,
-        experienceLevel: typeof quizAnswers.published === 'string' ? quizAnswers.published : undefined,
-        goal:            typeof quizAnswers.challenge === 'string' ? quizAnswers.challenge : undefined,
-        tone:            Array.isArray(quizAnswers.platforms)      ? quizAnswers.platforms : undefined,
-      });
-    } catch {
-      // ממשיכים ל-paywall גם אם השמירה נכשלה (למשל משתמש לא מחובר)
-    } finally {
-      setIsSaving(false);
-    }
-    goToPhase('paywall');
-  };
-
-  // ─── render ───────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['top', 'bottom']}>
-      <Animated.View
-        style={{
-          flex: 1,
-          opacity: phaseOpacity,
-          transform: [{ translateY: phaseTransY }],
-        }}
-      >
-        {phase === 'carousel' && (
-          <CarouselPhase
-            slides={SLIDES}
-            slideIndex={slideIndex}
-            carouselRef={carouselRef}
-            onScroll={onCarouselScroll}
-            onNext={handleCarouselNext}
+
+      {/* Ambient background glow — sits behind every step */}
+      <View pointerEvents="none" style={{ ...absFill }}>
+        <GlowOrb size={520} color="rgba(124,58,237,0.13)" top={-140} left={-160} />
+        <GlowOrb size={360} color="rgba(167,139,250,0.08)" bottom={-60} right={-100} />
+      </View>
+
+      {/* Back button */}
+      {showBackButton && (
+        <View style={{ paddingHorizontal: 20, paddingTop: 10, paddingBottom: 2 }}>
+          <View style={{ flexDirection: rtl.flexDirection }}>
+            <TouchableOpacity
+              onPress={goBack}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              style={{
+                width: 40, height: 40, borderRadius: 20,
+                backgroundColor: C.card,
+                borderWidth: 1, borderColor: C.border,
+                alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              <ChevronRight size={20} color={C.textLight} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Content */}
+      <Animated.View style={{ flex: 1, opacity: stepOpacity, transform: [{ translateY: stepTransY }] }}>
+        {step === 0 && <StepWelcome     onNext={advance} />}
+        {step === 1 && <StepWhatsEasyM  onNext={advance} />}
+        {step === 2 && (
+          <StepPain
+            selected={selectedPain}
+            onSelect={setSelectedPain}
+            onNext={advance}
           />
         )}
-        {phase === 'quiz' && (
-          <QuizPhase
-            quiz={QUIZ}
-            quizStep={quizStep}
-            quizAnswers={quizAnswers}
-            onSelect={selectAnswer}
-            onNext={handleQuizNext}
-            isAnswered={isAnswered}
-            qOpacity={qOpacity}
-            qTranslate={qTranslate}
-            isSaving={isSaving}
-          />
-        )}
-        {phase === 'paywall' && (
-          <PaywallPhase />
-        )}
+        {step === 3 && <StepValue          onNext={advance} />}
+        {step === 4 && <StepConsistency    onNext={advance} />}
+        {step === 5 && <StepBenefit        onNext={advance} />}
+        {step === 6 && <StepPersonalization onNext={advance} />}
+        {step === 7 && <StepFinalCTA       onFinish={() => router.replace('/(authenticated)/onboarding-complete')} />}
       </Animated.View>
+
+      {/* Animated dot indicators */}
+      <DotIndicator step={step} total={TOTAL_STEPS} />
     </SafeAreaView>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// CAROUSEL PHASE
+// DOT INDICATOR — smooth width + opacity transition
 // ═══════════════════════════════════════════════════════════════════════════════
-function CarouselPhase({
-  slides,
-  slideIndex,
-  carouselRef,
-  onScroll,
-  onNext,
-}: {
-  slides: typeof SLIDES;
-  slideIndex: number;
-  carouselRef: React.RefObject<ScrollView>;
-  onScroll: (e: NativeSyntheticEvent<NativeScrollEvent>) => void;
-  onNext: () => void;
-}) {
-  const btnScale = useRef(new Animated.Value(1)).current;
-  const btnIn  = () => Animated.spring(btnScale, { toValue: 0.96, useNativeDriver: true, speed: 60 }).start();
-  const btnOut = () => Animated.spring(btnScale, { toValue: 1,    useNativeDriver: true, speed: 35 }).start();
-  const isLast = slideIndex === slides.length - 1;
+function DotIndicator({ step, total }: { step: number; total: number }) {
+  const anims = useRef(
+    Array.from({ length: total }, (_, i) => ({
+      width:   new Animated.Value(i === 0 ? 20 : 6),
+      opacity: new Animated.Value(i === 0 ? 1  : 0.3),
+    })),
+  ).current;
+
+  useEffect(() => {
+    anims.forEach((a, i) => {
+      Animated.parallel([
+        Animated.timing(a.width,   { toValue: i === step ? 20 : 6,   duration: 240, useNativeDriver: false }),
+        Animated.timing(a.opacity, { toValue: i === step ? 1  : 0.3, duration: 240, useNativeDriver: false }),
+      ]).start();
+    });
+  }, [step]);
 
   return (
-    <View style={{ flex: 1 }}>
-      {/* Slides */}
-      <ScrollView
-        ref={carouselRef}
-        horizontal
-        pagingEnabled
-        showsHorizontalScrollIndicator={false}
-        onMomentumScrollEnd={onScroll}
-        style={{ flex: 1 }}
-        scrollEventThrottle={16}
+    <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 5, paddingBottom: 22 }}>
+      {anims.map((a, i) => (
+        <Animated.View
+          key={i}
+          style={{
+            width: a.width, height: 6, borderRadius: 3,
+            backgroundColor: C.purple,
+            opacity: a.opacity,
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
+// ─── Shared helpers ───────────────────────────────────────────────────────────
+
+const absFill = {
+  position: 'absolute' as const,
+  top: 0, left: 0, right: 0, bottom: 0,
+};
+
+function GlowOrb({
+  size = 300, color = 'rgba(124,58,237,0.22)',
+  top, bottom, left, right,
+}: { size?: number; color?: string; top?: number; bottom?: number; left?: number; right?: number }) {
+  return (
+    <View pointerEvents="none" style={{
+      position: 'absolute',
+      width: size, height: size, borderRadius: size / 2,
+      backgroundColor: color,
+      top, bottom, left, right,
+      transform: [{ scaleY: 0.5 }],
+    }} />
+  );
+}
+
+// Small floating sparkle particle
+function Sparkle({ x, y, size = 5, delay = 0 }: { x: number; y: number; size?: number; delay?: number }) {
+  const opacity    = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(0)).current;
+  const scale      = useRef(new Animated.Value(0.4)).current;
+
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.delay(delay),
+        Animated.parallel([
+          Animated.timing(opacity,    { toValue: 0.85, duration: 700,  useNativeDriver: true }),
+          Animated.timing(scale,      { toValue: 1,    duration: 700,  useNativeDriver: true }),
+          Animated.timing(translateY, { toValue: -18,  duration: 1600, useNativeDriver: true }),
+        ]),
+        Animated.parallel([
+          Animated.timing(opacity,    { toValue: 0,   duration: 500, useNativeDriver: true }),
+          Animated.timing(scale,      { toValue: 0.4, duration: 500, useNativeDriver: true }),
+        ]),
+        Animated.timing(translateY, { toValue: 0, duration: 0, useNativeDriver: true }),
+      ]),
+    );
+    anim.start();
+    return () => anim.stop();
+  }, []);
+
+  return (
+    <Animated.View pointerEvents="none" style={{
+      position: 'absolute', left: x, top: y,
+      width: size, height: size, borderRadius: size / 2,
+      backgroundColor: C.purpleLight,
+      opacity, transform: [{ translateY }, { scale }],
+    }} />
+  );
+}
+
+function CTAButton({
+  label, onPress, style,
+}: { label: string; onPress: () => void; style?: any }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const onIn  = () => Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, speed: 60 }).start();
+  const onOut = () => Animated.spring(scale, { toValue: 1,    useNativeDriver: true, speed: 35 }).start();
+
+  return (
+    <Animated.View
+      style={[
+        {
+          width: '100%',
+          alignSelf: 'stretch',
+          transform: [{ scale }],
+          shadowColor: C.purple,
+          shadowOffset: { width: 0, height: 12 },
+          shadowOpacity: 0.55,
+          shadowRadius: 26,
+          elevation: 16,
+          borderRadius: 26,
+        },
+        style,
+      ]}
+    >
+      <Pressable
+        onPressIn={onIn}
+        onPressOut={onOut}
+        onPress={onPress}
+        style={{ borderRadius: 26, overflow: 'hidden' }}
       >
-        {slides.map((slide, i) => {
-          const Icon = slide.icon;
-          return (
-            <View
-              key={i}
-              style={{
-                width: SCREEN_W,
-                flex: 1,
-                alignItems: 'center',
-                justifyContent: 'center',
-                paddingHorizontal: 32,
-              }}
-            >
-              {/* Purple mist */}
-              <View
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: SCREEN_W * 0.1,
-                  right: SCREEN_W * 0.1,
-                  height: 260,
-                  backgroundColor: slide.glow,
-                  borderRadius: 999,
-                  transform: [{ scaleX: 1.4 }, { scaleY: 0.5 }],
-                  opacity: 0.35,
-                }}
-              />
-
-              {/* Illustration */}
-              <View style={{ alignItems: 'center', marginBottom: 44 }}>
-                {/* Outer glow ring */}
-                <View
-                  style={{
-                    position: 'absolute',
-                    width: 140,
-                    height: 140,
-                    borderRadius: 70,
-                    backgroundColor: slide.bg,
-                    transform: [{ scale: 1.6 }],
-                  }}
-                />
-                {/* Inner ring */}
-                <View
-                  style={{
-                    position: 'absolute',
-                    width: 140,
-                    height: 140,
-                    borderRadius: 70,
-                    borderWidth: 1,
-                    borderColor: C.purpleBdr,
-                    transform: [{ scale: 1.2 }],
-                  }}
-                />
-                {/* Icon box */}
-                <View
-                  style={{
-                    width: 120,
-                    height: 120,
-                    borderRadius: 36,
-                    backgroundColor: slide.bg,
-                    borderWidth: 1.5,
-                    borderColor: C.purpleBdr,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    shadowColor: C.purple,
-                    shadowOffset: { width: 0, height: 10 },
-                    shadowOpacity: 0.45,
-                    shadowRadius: 24,
-                    elevation: 12,
-                  }}
-                >
-                  <Icon size={52} color={C.purple} />
-                </View>
-              </View>
-
-              {/* Tag pill */}
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 5,
-                  backgroundColor: C.purpleFaint,
-                  borderRadius: 20,
-                  paddingHorizontal: 14,
-                  paddingVertical: 6,
-                  borderWidth: 1,
-                  borderColor: C.purpleBdr,
-                  marginBottom: 20,
-                }}
-              >
-                <Sparkles size={12} color={C.purple} />
-                <Text style={{ color: '#a78bfa', fontSize: 12, fontWeight: '700' }}>
-                  {slide.tag}
-                </Text>
-              </View>
-
-              {/* Texts */}
-              <Text
-                style={{
-                  color: '#fff',
-                  fontSize: 30,
-                  fontWeight: '800',
-                  textAlign: 'center',
-                  lineHeight: 40,
-                  marginBottom: 14,
-                }}
-              >
-                {slide.title}
-              </Text>
-              <Text
-                style={{
-                  color: C.textLight,
-                  fontSize: 16,
-                  textAlign: 'center',
-                  lineHeight: 24,
-                }}
-              >
-                {slide.subtitle}
-              </Text>
-            </View>
-          );
-        })}
-      </ScrollView>
-
-      {/* Dots + CTA */}
-      <View style={{ paddingHorizontal: 24, paddingBottom: 20 }}>
-        {/* Dots */}
-        <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 24 }}>
-          {slides.map((_, i) => (
-            <View
-              key={i}
-              style={{
-                height: 6,
-                width: i === slideIndex ? 24 : 6,
-                borderRadius: 3,
-                backgroundColor: i === slideIndex ? C.purple : C.border,
-              }}
-            />
-          ))}
-        </View>
-
-        {/* CTA button */}
-        <Animated.View style={{ transform: [{ scale: btnScale }] }}>
-          <Pressable
-            onPressIn={btnIn}
-            onPressOut={btnOut}
-            onPress={onNext}
+        <LinearGradient
+          colors={['#8b5cf6', '#7C3AED', '#6D28D9']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={{
+            minHeight: 60,
+            paddingVertical: 18,
+            paddingHorizontal: 24,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Text
             style={{
-              backgroundColor: C.purple,
-              borderRadius: 22,
-              paddingVertical: 18,
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 10,
-              shadowColor: C.purple,
-              shadowOffset: { width: 0, height: 8 },
-              shadowOpacity: 0.50,
-              shadowRadius: 20,
-              elevation: 12,
+              color: '#fff',
+              fontSize: 17,
+              fontWeight: '800',
+              letterSpacing: 0.3,
+              textAlign: 'center',
             }}
+            numberOfLines={1}
           >
-            <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700' }}>
-              {isLast ? 'בוא נתחיל ⚡' : 'המשך ➡️'}
-            </Text>
-          </Pressable>
+            {label}
+          </Text>
+        </LinearGradient>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+// Shared title / subtitle styles — always centered
+const T = {
+  title: {
+    color: C.white, fontSize: 30, fontWeight: '800' as const,
+    textAlign: 'center' as const, lineHeight: 42,
+  },
+  sub: {
+    color: C.textLight, fontSize: 15, fontWeight: '400' as const,
+    textAlign: 'center' as const, lineHeight: 24,
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SCREEN 0 — WELCOME
+// ═══════════════════════════════════════════════════════════════════════════════
+const WELCOME_SPARKLES = [
+  { x: 48,  y: 130, size: 5, delay: 0    },
+  { x: 300, y: 90,  size: 4, delay: 500  },
+  { x: 32,  y: 310, size: 3, delay: 900  },
+  { x: 318, y: 280, size: 5, delay: 300  },
+  { x: 170, y: 60,  size: 3, delay: 1100 },
+];
+
+function StepWelcome({ onNext }: { onNext: () => void }) {
+  const floatY     = useRef(new Animated.Value(0)).current;
+  const entryFade  = useRef(new Animated.Value(0)).current;
+  const entryY     = useRef(new Animated.Value(30)).current;
+  const glowPulse  = useRef(new Animated.Value(0.8)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(entryFade, { toValue: 1, duration: 700, useNativeDriver: true }),
+      Animated.spring(entryY,    { toValue: 0, useNativeDriver: true, speed: 24, bounciness: 7 }),
+    ]).start();
+
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(floatY,    { toValue: -10, duration: 2100, useNativeDriver: true }),
+        Animated.timing(floatY,    { toValue:  10, duration: 2100, useNativeDriver: true }),
+      ]),
+    ).start();
+
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(glowPulse, { toValue: 1.2,  duration: 1600, useNativeDriver: true }),
+        Animated.timing(glowPulse, { toValue: 0.8,  duration: 1600, useNativeDriver: true }),
+      ]),
+    ).start();
+  }, []);
+
+  return (
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+      <GlowOrb size={460} color="rgba(124,58,237,0.18)" top={-100} left={-110} />
+      <GlowOrb size={300} color="rgba(139,92,246,0.11)" bottom={50} right={-80} />
+
+      {WELCOME_SPARKLES.map((s, i) => <Sparkle key={i} {...s} />)}
+
+      <Animated.View style={{ alignItems: 'center', opacity: entryFade, transform: [{ translateY: entryY }] }}>
+
+        {/* Logo with pulsing glow ring */}
+        <Animated.View style={{
+          transform: [{ translateY: floatY }],
+          marginBottom: 44,
+          alignItems: 'center',
+        }}>
+          <Animated.View pointerEvents="none" style={{
+            position: 'absolute',
+            width: 200, height: 200, borderRadius: 100,
+            backgroundColor: 'rgba(124,58,237,0.20)',
+            transform: [{ scaleY: 0.44 }, { scale: glowPulse }],
+            top: 18, alignSelf: 'center',
+          }} />
+          <Image
+            source={require('@/assets/images/logo.png')}
+            style={{ width: 138, height: 138 }}
+            resizeMode="contain"
+          />
         </Animated.View>
 
-        {/* Skip */}
-        {!isLast && (
-          <Text style={{ color: C.textSub, textAlign: 'center', fontSize: 13, marginTop: 14 }}>
-            דלג
-          </Text>
-        )}
-      </View>
+        <Text style={[T.title, { marginBottom: 16 }]}>
+          ברוכים הבאים{'\n'}ל-Easy-M
+        </Text>
+        <Text style={[T.sub, { marginBottom: 56 }]}>
+          העוזר השיווקי שייצור לעסק שלך{'\n'}פוסטים מקצועיים בכל שבוע
+        </Text>
+
+        <View style={{ width: '100%' }}>
+          <CTAButton label="בוא נתחיל" onPress={onNext} />
+        </View>
+      </Animated.View>
     </View>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// QUIZ PHASE
+// SCREEN 1 — WHAT IS EASY-M?
 // ═══════════════════════════════════════════════════════════════════════════════
-function QuizPhase({
-  quiz,
-  quizStep,
-  quizAnswers,
-  onSelect,
-  onNext,
-  isAnswered,
-  qOpacity,
-  qTranslate,
-  isSaving = false,
-}: {
-  quiz: typeof QUIZ;
-  quizStep: number;
-  quizAnswers: QuizAnswers;
-  onSelect: (id: string, val: string, type: 'single' | 'multi') => void;
-  onNext: () => void;
-  isAnswered: (q: (typeof QUIZ)[number]) => boolean;
-  qOpacity: Animated.Value;
-  qTranslate: Animated.Value;
-  isSaving?: boolean;
-}) {
-  const question = quiz[quizStep];
-  const answered = isAnswered(question);
-  const isLast   = quizStep === quiz.length - 1;
-  const progress = (quizStep + 1) / quiz.length;
+const EASYM_FEATURES = [
+  { emoji: '🖼️', title: 'תמונות שיווקיות', sub: 'AI מעצב תמונה מקצועית לפי העסק שלך' },
+  { emoji: '✍️', title: 'טקסט מוכן לפרסום', sub: 'כיתוב שיווקי שמדבר ישירות לקהל שלך'  },
+  { emoji: '#️⃣', title: 'האשטגים אוטומטיים', sub: 'חשיפה מקסימלית — בלי לחפש בעצמך'     },
+];
 
-  const btnScale = useRef(new Animated.Value(1)).current;
-  const btnIn  = () => Animated.spring(btnScale, { toValue: 0.96, useNativeDriver: true, speed: 60 }).start();
-  const btnOut = () => Animated.spring(btnScale, { toValue: 1,    useNativeDriver: true, speed: 35 }).start();
+function StepWhatsEasyM({ onNext }: { onNext: () => void }) {
+  const logoScale  = useRef(new Animated.Value(0.6)).current;
+  const logoOpacity = useRef(new Animated.Value(0)).current;
+  const titleFade  = useRef(new Animated.Value(0)).current;
+  const titleY     = useRef(new Animated.Value(18)).current;
+  const itemAnims  = useRef(
+    EASYM_FEATURES.map(() => ({
+      opacity:    new Animated.Value(0),
+      translateX: new Animated.Value(20),
+    })),
+  ).current;
 
-  const isSelected = (value: string): boolean => {
-    const ans = quizAnswers[question.id];
-    if (question.type === 'single') return ans === value;
-    return Array.isArray(ans) && ans.includes(value);
-  };
+  useEffect(() => {
+    // Logo pop in
+    Animated.parallel([
+      Animated.spring(logoScale,   { toValue: 1,  useNativeDriver: true, speed: 30, bounciness: 10 }),
+      Animated.timing(logoOpacity, { toValue: 1,  duration: 400, useNativeDriver: true }),
+    ]).start();
+
+    // Title
+    setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(titleFade, { toValue: 1, duration: 350, useNativeDriver: true }),
+        Animated.spring(titleY,    { toValue: 0, useNativeDriver: true, speed: 40, bounciness: 5 }),
+      ]).start();
+    }, 220);
+
+    // Staggered feature rows
+    itemAnims.forEach((a, i) => {
+      setTimeout(() => {
+        Animated.parallel([
+          Animated.timing(a.opacity,    { toValue: 1, duration: 320, useNativeDriver: true }),
+          Animated.spring(a.translateX, { toValue: 0, useNativeDriver: true, speed: 40, bounciness: 5 }),
+        ]).start();
+      }, 480 + i * 140);
+    });
+  }, []);
 
   return (
     <ScrollView
       style={{ flex: 1 }}
-      contentContainerStyle={{ paddingBottom: 32 }}
+      contentContainerStyle={{ paddingHorizontal: 28, paddingTop: 16, paddingBottom: 24 }}
       showsVerticalScrollIndicator={false}
-      keyboardShouldPersistTaps="handled"
     >
-      <View style={{ paddingHorizontal: 24, paddingTop: 24 }}>
-
-        {/* Header fixed */}
-        <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', textAlign: 'right', marginBottom: 6 }}>
-          בוא נכיר את העסק שלך
-        </Text>
-        <Text style={{ color: C.textMid, fontSize: 14, textAlign: 'right', marginBottom: 24 }}>
-          {quizStep + 1} מתוך {quiz.length} שאלות
-        </Text>
-
-        {/* Progress bar */}
-        <View
-          style={{
-            height: 4,
-            backgroundColor: C.border,
-            borderRadius: 2,
-            marginBottom: 36,
-            overflow: 'hidden',
-          }}
-        >
-          <Animated.View
-            style={{
-              height: 4,
-              width: `${progress * 100}%`,
-              backgroundColor: C.purple,
-              borderRadius: 2,
-            }}
-          />
+      {/* Logo small header */}
+      <Animated.View style={{
+        alignItems: 'center', marginBottom: 28,
+        opacity: logoOpacity, transform: [{ scale: logoScale }],
+      }}>
+        <Image
+          source={require('@/assets/images/logo.png')}
+          style={{ width: 72, height: 72 }}
+          resizeMode="contain"
+        />
+        <View style={{
+          marginTop: 8, paddingHorizontal: 14, paddingVertical: 4,
+          borderRadius: 20, backgroundColor: C.purpleFaint,
+          borderWidth: 1, borderColor: C.purpleBdr,
+        }}>
+          <Text style={{ color: C.purpleLight, fontSize: 13, fontWeight: '700' }}>Easy-M AI</Text>
         </View>
+      </Animated.View>
 
-        {/* Animated question container */}
-        <Animated.View
-          style={{
-            opacity: qOpacity,
-            transform: [{ translateX: qTranslate }],
-          }}
-        >
-          {/* Question */}
-          <Text
+      <Animated.View style={{ opacity: titleFade, transform: [{ translateY: titleY }] }}>
+        <Text style={[T.title, { marginBottom: 12 }]}>מה זה Easy-M?</Text>
+        <Text style={[T.sub, { marginBottom: 32 }]}>
+          עוזר שיווק AI שיוצר לעסק שלך תמונות, טקסטים{'\n'}והאשטגים מוכנים לפרסום — בלי לחשוב מה לכתוב{'\n'}ובלי לעצב לבד.
+        </Text>
+      </Animated.View>
+
+      {/* Feature rows */}
+      <View style={{ gap: 12, marginBottom: 32 }}>
+        {EASYM_FEATURES.map((feat, i) => (
+          <Animated.View
+            key={feat.title}
             style={{
-              color: '#fff',
-              fontSize: 24,
-              fontWeight: '800',
-              textAlign: 'right',
-              marginBottom: 24,
-              lineHeight: 34,
-            }}
-          >
-            {question.question}
-          </Text>
-
-          {question.type === 'multi' && (
-            <Text style={{ color: C.textMid, fontSize: 12, textAlign: 'right', marginBottom: 14 }}>
-              ניתן לבחור יותר מאחד
-            </Text>
-          )}
-
-          {/* Options */}
-          <View style={{ gap: 12, marginBottom: 36 }}>
-            {question.options.map((opt) => {
-              const selected = isSelected(opt.value);
-              return (
-                <OptionCard
-                  key={opt.value}
-                  label={opt.label}
-                  selected={selected}
-                  onPress={() => onSelect(question.id, opt.value, question.type)}
-                />
-              );
-            })}
-          </View>
-        </Animated.View>
-
-        {/* CTA */}
-        <Animated.View style={{ transform: [{ scale: btnScale }] }}>
-          <Pressable
-            onPressIn={(answered && !isSaving) ? btnIn : undefined}
-            onPressOut={(answered && !isSaving) ? btnOut : undefined}
-            onPress={(answered && !isSaving) ? onNext : undefined}
-            disabled={isSaving}
-            style={{
-              backgroundColor: answered ? C.purple : C.purpleDeep,
-              borderRadius: 22,
-              paddingVertical: 18,
-              flexDirection: 'row',
+              opacity: itemAnims[i].opacity,
+              transform: [{ translateX: itemAnims[i].translateX }],
+              flexDirection: rtl.flexDirection,
               alignItems: 'center',
-              justifyContent: 'center',
-              gap: 10,
-              shadowColor: C.purple,
-              shadowOffset: { width: 0, height: 8 },
-              shadowOpacity: answered ? 0.50 : 0.20,
-              shadowRadius: 20,
-              elevation: answered ? 12 : 3,
-              opacity: answered ? 1 : 0.55,
+              gap: 16,
+              backgroundColor: C.card,
+              borderRadius: 18,
+              borderWidth: 1,
+              borderColor: C.border,
+              paddingVertical: 18,
+              paddingHorizontal: 20,
             }}
           >
-            {isSaving ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <>
-                <Zap size={18} color="#fff" fill="#fff" />
-                <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700' }}>
-                  {isLast ? 'סיימתי ⚡' : 'המשך ⚡'}
-                </Text>
-              </>
-            )}
-          </Pressable>
-        </Animated.View>
-
+            <View style={{
+              width: 50, height: 50, borderRadius: 14,
+              backgroundColor: C.purpleFaint,
+              borderWidth: 1, borderColor: C.purpleBdr,
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Text style={{ fontSize: 24 }}>{feat.emoji}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: C.white, fontSize: 16, fontWeight: '700', textAlign: 'right' }}>
+                {feat.title}
+              </Text>
+              <Text style={{ color: C.textLight, fontSize: 13, marginTop: 3, textAlign: 'right' }}>
+                {feat.sub}
+              </Text>
+            </View>
+          </Animated.View>
+        ))}
       </View>
+
+      <CTAButton label="המשך" onPress={onNext} />
     </ScrollView>
   );
 }
 
-// ─── כרטיס אפשרות בחירה ─────────────────────────────────────────────────────
-function OptionCard({
-  label,
-  selected,
-  onPress,
-}: {
-  label: string;
-  selected: boolean;
-  onPress: () => void;
-}) {
-  const scale = useRef(new Animated.Value(1)).current;
-  const onIn  = () => Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, speed: 70 }).start();
+// ═══════════════════════════════════════════════════════════════════════════════
+// SCREEN 2 — PAIN
+// ═══════════════════════════════════════════════════════════════════════════════
+function PainCard({
+  label, selected, onPress, index,
+}: { label: string; selected: boolean; onPress: () => void; index: number }) {
+  const scale      = useRef(new Animated.Value(1)).current;
+  const entryFade  = useRef(new Animated.Value(0)).current;
+  const entryY     = useRef(new Animated.Value(14)).current;
+
+  useEffect(() => {
+    setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(entryFade, { toValue: 1, duration: 300, useNativeDriver: true }),
+        Animated.spring(entryY,    { toValue: 0, useNativeDriver: true, speed: 42, bounciness: 5 }),
+      ]).start();
+    }, index * 100);
+  }, []);
+
+  const onIn  = () => Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, speed: 80 }).start();
   const onOut = () => Animated.spring(scale, { toValue: 1,    useNativeDriver: true, speed: 50 }).start();
 
   return (
-    <Animated.View style={{ transform: [{ scale }] }}>
-      <TouchableOpacity
-        activeOpacity={1}
+    <Animated.View style={{
+      opacity: entryFade, transform: [{ translateY: entryY }, { scale }],
+    }}>
+      <Pressable
         onPressIn={onIn}
         onPressOut={onOut}
         onPress={onPress}
         style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 12,
-          paddingVertical: 16,
-          paddingHorizontal: 18,
-          borderRadius: 18,
           backgroundColor: selected ? C.purpleFaint : C.card,
+          borderRadius: 16,
           borderWidth: 1.5,
           borderColor: selected ? C.purple : C.border,
-          shadowColor: selected ? C.purple : 'transparent',
-          shadowOffset: { width: 0, height: 4 },
-          shadowOpacity: selected ? 0.28 : 0,
-          shadowRadius: 10,
-          elevation: selected ? 5 : 0,
+          paddingVertical: 18,
+          paddingHorizontal: 20,
+          alignItems: 'center',
+          shadowColor:   selected ? C.purple : 'transparent',
+          shadowOffset:  { width: 0, height: 6 },
+          shadowOpacity: selected ? 0.38 : 0,
+          shadowRadius:  16,
+          elevation:     selected ? 8 : 0,
         }}
       >
-        {/* Check indicator */}
-        <View
-          style={{
-            width: 22,
-            height: 22,
-            borderRadius: 11,
-            borderWidth: selected ? 0 : 1.5,
-            borderColor: C.border,
-            backgroundColor: selected ? C.purple : 'transparent',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          {selected && <CheckCircle2 size={16} color="#fff" fill={C.purple} />}
-        </View>
-
-        {/* Label */}
-        <Text
-          style={{
-            flex: 1,
-            color: selected ? '#e4e4e7' : C.textLight,
-            fontSize: 15,
-            fontWeight: selected ? '700' : '400',
-            textAlign: 'right',
-          }}
-        >
+        <Text style={{
+          color: selected ? C.purpleLight : C.textLight,
+          fontSize: 16,
+          fontWeight: selected ? '700' : '500',
+          textAlign: 'center',
+        }}>
           {label}
         </Text>
-      </TouchableOpacity>
+      </Pressable>
     </Animated.View>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// PAYWALL PHASE
-// ═══════════════════════════════════════════════════════════════════════════════
-function PaywallPhase() {
-  const btnScale = useRef(new Animated.Value(1)).current;
-  const btnIn  = () => Animated.spring(btnScale, { toValue: 0.96, useNativeDriver: true, speed: 60 }).start();
-  const btnOut = () => Animated.spring(btnScale, { toValue: 1,    useNativeDriver: true, speed: 35 }).start();
+function StepPain({
+  selected, onSelect, onNext,
+}: { selected: string | null; onSelect: (v: string) => void; onNext: () => void }) {
+  return (
+    <ScrollView
+      style={{ flex: 1 }}
+      contentContainerStyle={{ paddingHorizontal: 28, paddingTop: 22, paddingBottom: 24 }}
+      showsVerticalScrollIndicator={false}
+    >
+      <Text style={[T.title, { marginBottom: 12 }]}>
+        מה הכי קשה לך{'\n'}בשיווק היום?
+      </Text>
+      <Text style={[T.sub, { marginBottom: 30 }]}>
+        בחר את מה שהכי מפריע לך — כדי ש-Easy-M{'\n'}יבנה לך חוויה שמתאימה לעסק שלך.
+      </Text>
 
-  const FEATURES = [
-    { icon: Zap,      text: 'פוסטים מוכנים תוך שניות'    },
-    { icon: Sparkles, text: 'מותאם אישית לעסק שלך'       },
-    { icon: Clock,    text: 'חוסך שעות עבודה כל שבוע'   },
-  ];
+      <View style={{ gap: 10 }}>
+        {PAIN_OPTIONS.map((opt, i) => (
+          <PainCard
+            key={opt}
+            label={opt}
+            selected={selected === opt}
+            onPress={() => onSelect(opt)}
+            index={i}
+          />
+        ))}
+      </View>
+
+      <View style={{ marginTop: 26 }}>
+        <CTAButton label="המשך" onPress={onNext} />
+      </View>
+    </ScrollView>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SCREEN 3 — VALUE
+// ═══════════════════════════════════════════════════════════════════════════════
+const VALUE_CARDS = [
+  { emoji: '🖼️', title: 'תמונה מקצועית',   sub: 'עיצוב AI מותאם לעסק שלך'         },
+  { emoji: '✍️', title: 'טקסט שיווקי',     sub: 'כיתוב שמדבר ישירות לקהל שלך'    },
+  { emoji: '#️⃣', title: 'האשטגים מוכנים',  sub: 'חשיפה מקסימלית בלי מאמץ'         },
+];
+
+function StepValue({ onNext }: { onNext: () => void }) {
+  const cardAnims = useRef(
+    VALUE_CARDS.map(() => ({
+      opacity:    new Animated.Value(0),
+      translateY: new Animated.Value(18),
+    })),
+  ).current;
+
+  useEffect(() => {
+    cardAnims.forEach((a, i) => {
+      setTimeout(() => {
+        Animated.parallel([
+          Animated.timing(a.opacity,    { toValue: 1, duration: 320, useNativeDriver: true }),
+          Animated.spring(a.translateY, { toValue: 0, useNativeDriver: true, speed: 40, bounciness: 5 }),
+        ]).start();
+      }, 200 + i * 130);
+    });
+  }, []);
 
   return (
     <ScrollView
       style={{ flex: 1 }}
-      contentContainerStyle={{ paddingBottom: 40 }}
+      contentContainerStyle={{ paddingHorizontal: 28, paddingTop: 22, paddingBottom: 24 }}
       showsVerticalScrollIndicator={false}
     >
-      <View style={{ paddingHorizontal: 24, paddingTop: 32 }}>
+      <Text style={[T.title, { marginBottom: 12 }]}>
+        Easy-M עושה{'\n'}את זה בשבילך
+      </Text>
+      <Text style={[T.sub, { marginBottom: 30 }]}>
+        במקום לבזבז שעות על כתיבה ועיצוב,{'\n'}ה-AI יוצר לך פוסט שיווקי מוכן לשיתוף.
+      </Text>
 
-        {/* ─── Purple glow mist ─── */}
-        <View
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: -40,
-            right: -40,
-            height: 200,
-            backgroundColor: 'rgba(124,58,237,0.22)',
-            borderRadius: 999,
-            transform: [{ scaleX: 1.2 }, { scaleY: 0.4 }],
-            opacity: 0.5,
-          }}
-        />
-
-        {/* ─── Icon ─── */}
-        <View style={{ alignItems: 'center', marginBottom: 28, marginTop: 8 }}>
-          <View style={{ position: 'absolute', width: 100, height: 100, borderRadius: 50, backgroundColor: 'rgba(124,58,237,0.12)', transform: [{ scale: 2 }] }} />
-          <View
+      <View style={{ gap: 12, marginBottom: 32 }}>
+        {VALUE_CARDS.map((card, i) => (
+          <Animated.View
+            key={card.title}
             style={{
-              width: 90,
-              height: 90,
-              borderRadius: 28,
+              opacity: cardAnims[i].opacity,
+              transform: [{ translateY: cardAnims[i].translateY }],
+              flexDirection: rtl.flexDirection,
+              alignItems: 'center',
+              gap: 18,
+              backgroundColor: C.card,
+              borderRadius: 18,
+              borderWidth: 1,
+              borderColor: C.border,
+              paddingVertical: 20,
+              paddingHorizontal: 22,
+            }}
+          >
+            <View style={{
+              width: 52, height: 52, borderRadius: 14,
               backgroundColor: C.purpleFaint,
-              borderWidth: 1.5,
-              borderColor: C.purpleBdr,
-              alignItems: 'center',
-              justifyContent: 'center',
-              shadowColor: C.purple,
-              shadowOffset: { width: 0, height: 10 },
-              shadowOpacity: 0.50,
-              shadowRadius: 24,
-              elevation: 14,
-            }}
-          >
-            <Sparkles size={42} color={C.purple} />
-          </View>
-        </View>
-
-        {/* ─── Texts ─── */}
-        <Text style={{ color: '#fff', fontSize: 28, fontWeight: '800', textAlign: 'center', lineHeight: 38, marginBottom: 10 }}>
-          תתחיל לקבל פוסטים{'\n'}מוכנים כבר היום
-        </Text>
-        <Text style={{ color: C.textLight, fontSize: 15, textAlign: 'center', lineHeight: 22, marginBottom: 32 }}>
-          נסה עכשיו בחינם וקבל את הפוסט הראשון שלך
-        </Text>
-
-        {/* ─── Feature cards ─── */}
-        <View
-          style={{
-            backgroundColor: C.card,
-            borderRadius: 24,
-            borderWidth: 1,
-            borderColor: C.purpleBdr,
-            padding: 20,
-            gap: 0,
-            marginBottom: 24,
-            shadowColor: C.purple,
-            shadowOffset: { width: 0, height: 8 },
-            shadowOpacity: 0.20,
-            shadowRadius: 20,
-            elevation: 8,
-          }}
-        >
-          {FEATURES.map((feat, i) => {
-            const Icon = feat.icon;
-            return (
-              <View key={i}>
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 14,
-                    paddingVertical: 14,
-                  }}
-                >
-                  {/* Icon bubble */}
-                  <View
-                    style={{
-                      width: 40,
-                      height: 40,
-                      borderRadius: 12,
-                      backgroundColor: C.purpleFaint,
-                      borderWidth: 1,
-                      borderColor: C.purpleBdr,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <Icon size={18} color={C.purple} />
-                  </View>
-                  <Text style={{ flex: 1, color: '#e4e4e7', fontSize: 15, fontWeight: '600', textAlign: 'right' }}>
-                    {feat.text}
-                  </Text>
-                  {/* Check */}
-                  <View
-                    style={{
-                      width: 22,
-                      height: 22,
-                      borderRadius: 11,
-                      backgroundColor: C.purple,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>✓</Text>
-                  </View>
-                </View>
-                {i < FEATURES.length - 1 && (
-                  <View style={{ height: 1, backgroundColor: C.border }} />
-                )}
-              </View>
-            );
-          })}
-        </View>
-
-        {/* ─── Price card ─── */}
-        <View
-          style={{
-            backgroundColor: C.purpleFaint,
-            borderRadius: 20,
-            borderWidth: 1.5,
-            borderColor: C.purpleBdr,
-            padding: 20,
-            alignItems: 'center',
-            marginBottom: 24,
-          }}
-        >
-          <Text style={{ color: C.textLight, fontSize: 13, marginBottom: 6 }}>
-            ללא התחייבות
-          </Text>
-          <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 4 }}>
-            <Text style={{ color: C.textMid, fontSize: 16, marginBottom: 4 }}>₪</Text>
-            <Text style={{ color: '#fff', fontSize: 48, fontWeight: '900', lineHeight: 56 }}>99</Text>
-            <Text style={{ color: C.textMid, fontSize: 15, marginBottom: 8 }}>/חודש</Text>
-          </View>
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 6,
-              backgroundColor: C.purpleMid,
-              borderRadius: 10,
-              paddingHorizontal: 12,
-              paddingVertical: 5,
-              marginTop: 4,
-            }}
-          >
-            <Sparkles size={12} color="#a78bfa" />
-            <Text style={{ color: '#a78bfa', fontSize: 12, fontWeight: '700' }}>
-              הפוסט הראשון — חינם!
-            </Text>
-          </View>
-        </View>
-
-        {/* ─── CTA ─── */}
-        <Animated.View style={{ transform: [{ scale: btnScale }], marginBottom: 14 }}>
-          <Pressable
-            onPressIn={btnIn}
-            onPressOut={btnOut}
-            style={{
-              backgroundColor: C.purple,
-              borderRadius: 22,
-              paddingVertical: 18,
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 10,
-              shadowColor: C.purple,
-              shadowOffset: { width: 0, height: 8 },
-              shadowOpacity: 0.55,
-              shadowRadius: 20,
-              elevation: 14,
-            }}
-          >
-            <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>
-              התחל עכשיו 🚀
-            </Text>
-          </Pressable>
-        </Animated.View>
-
-        {/* Skip */}
-        <TouchableOpacity style={{ alignItems: 'center', paddingVertical: 12 }}>
-          <Text style={{ color: C.textSub, fontSize: 14 }}>אולי אחר כך</Text>
-        </TouchableOpacity>
-
+              borderWidth: 1, borderColor: C.purpleBdr,
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Text style={{ fontSize: 26 }}>{card.emoji}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: C.white, fontSize: 16, fontWeight: '700', textAlign: 'right' }}>
+                {card.title}
+              </Text>
+              <Text style={{ color: C.textLight, fontSize: 13, marginTop: 3, textAlign: 'right' }}>
+                {card.sub}
+              </Text>
+            </View>
+          </Animated.View>
+        ))}
       </View>
+
+      <CTAButton label="המשך" onPress={onNext} />
     </ScrollView>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SCREEN 4 — CONSISTENCY
+// ═══════════════════════════════════════════════════════════════════════════════
+function StepConsistency({ onNext }: { onNext: () => void }) {
+  const badgeScale   = useRef(new Animated.Value(0.4)).current;
+  const badgeFade    = useRef(new Animated.Value(0)).current;
+  const pulseScale   = useRef(new Animated.Value(1)).current;
+  const contentFade  = useRef(new Animated.Value(0)).current;
+  const contentY     = useRef(new Animated.Value(20)).current;
+
+  useEffect(() => {
+    // Badge pop in
+    Animated.parallel([
+      Animated.spring(badgeScale, { toValue: 1, useNativeDriver: true, speed: 22, bounciness: 14 }),
+      Animated.timing(badgeFade,  { toValue: 1, duration: 400, useNativeDriver: true }),
+    ]).start();
+
+    // Content fade after badge
+    setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(contentFade, { toValue: 1, duration: 380, useNativeDriver: true }),
+        Animated.spring(contentY,    { toValue: 0, useNativeDriver: true, speed: 40, bounciness: 5 }),
+      ]).start();
+    }, 340);
+
+    // Ongoing pulse
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseScale, { toValue: 1.07, duration: 950, useNativeDriver: true }),
+        Animated.timing(pulseScale, { toValue: 1.00, duration: 950, useNativeDriver: true }),
+      ]),
+    ).start();
+  }, []);
+
+  return (
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+      <GlowOrb size={360} color="rgba(124,58,237,0.17)" top={-60} left={-80} />
+
+      {/* Pulsing badge */}
+      <Animated.View style={{
+        opacity: badgeFade,
+        transform: [{ scale: Animated.multiply(badgeScale, pulseScale) }],
+        marginBottom: 38,
+      }}>
+        <View style={{
+          width: 124, height: 124, borderRadius: 38,
+          backgroundColor: C.purpleFaint,
+          borderWidth: 2, borderColor: C.purpleBdr,
+          alignItems: 'center', justifyContent: 'center',
+          shadowColor: C.purple,
+          shadowOffset: { width: 0, height: 12 },
+          shadowOpacity: 0.55,
+          shadowRadius: 28,
+          elevation: 16,
+        }}>
+          <Text style={{ color: C.purple, fontSize: 54, fontWeight: '900', lineHeight: 62 }}>3</Text>
+        </View>
+      </Animated.View>
+
+      <Animated.View style={{
+        alignItems: 'center',
+        opacity: contentFade,
+        transform: [{ translateY: contentY }],
+        width: '100%',
+      }}>
+        <Text style={[T.title, { marginBottom: 14 }]}>
+          3 פוסטים חדשים{'\n'}בכל שבוע
+        </Text>
+        <Text style={[T.sub, { marginBottom: 52 }]}>
+          כדי שהעסק שלך יישאר פעיל, נראה מקצועי{'\n'}וימשיך להופיע מול לקוחות.
+        </Text>
+        <CTAButton label="המשך" onPress={onNext} />
+      </Animated.View>
+    </View>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SCREEN 5 — BENEFIT
+// ═══════════════════════════════════════════════════════════════════════════════
+function StepBenefit({ onNext }: { onNext: () => void }) {
+  const emojiScale = useRef(new Animated.Value(0.4)).current;
+  const fade       = useRef(new Animated.Value(0)).current;
+  const textY      = useRef(new Animated.Value(20)).current;
+
+  useEffect(() => {
+    Animated.spring(emojiScale, { toValue: 1, useNativeDriver: true, speed: 26, bounciness: 12 }).start();
+    setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(fade,  { toValue: 1, duration: 380, useNativeDriver: true }),
+        Animated.spring(textY, { toValue: 0, useNativeDriver: true, speed: 40, bounciness: 5 }),
+      ]).start();
+    }, 200);
+  }, []);
+
+  return (
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+      <GlowOrb size={360} color="rgba(124,58,237,0.15)" bottom={40} right={-80} />
+
+      <Animated.Text style={{ fontSize: 68, marginBottom: 34, transform: [{ scale: emojiScale }] }}>
+        📣
+      </Animated.Text>
+
+      <Animated.View style={{ alignItems: 'center', opacity: fade, transform: [{ translateY: textY }], width: '100%' }}>
+        <Text style={[T.title, { marginBottom: 14 }]}>
+          יותר נוכחות.{'\n'}פחות התעסקות.
+        </Text>
+        <Text style={[T.sub, { marginBottom: 52 }]}>
+          Easy-M עוזר לך להיראות כמו עסק{'\n'}שמפרסם בצורה קבועה ומקצועית,{'\n'}גם בלי מעצב ובלי מנהל סושיאל.
+        </Text>
+        <CTAButton label="המשך" onPress={onNext} />
+      </Animated.View>
+    </View>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SCREEN 6 — PERSONALIZATION TEASER
+// ═══════════════════════════════════════════════════════════════════════════════
+const TEASER_ITEMS = [
+  { emoji: '🖼️', label: 'לוגו ותמונות עסק'  },
+  { emoji: '📝', label: 'פרטי העסק שלך'     },
+  { emoji: '🎨', label: 'סגנון ומותג אישי'  },
+];
+
+function StepPersonalization({ onNext }: { onNext: () => void }) {
+  const headerFade = useRef(new Animated.Value(0)).current;
+  const headerY    = useRef(new Animated.Value(18)).current;
+  const itemAnims  = useRef(
+    TEASER_ITEMS.map(() => ({
+      opacity:    new Animated.Value(0),
+      translateY: new Animated.Value(14),
+    })),
+  ).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(headerFade, { toValue: 1, duration: 360, useNativeDriver: true }),
+      Animated.spring(headerY,    { toValue: 0, useNativeDriver: true, speed: 40, bounciness: 5 }),
+    ]).start();
+
+    itemAnims.forEach((a, i) => {
+      setTimeout(() => {
+        Animated.parallel([
+          Animated.timing(a.opacity,    { toValue: 1, duration: 300, useNativeDriver: true }),
+          Animated.spring(a.translateY, { toValue: 0, useNativeDriver: true, speed: 42, bounciness: 5 }),
+        ]).start();
+      }, 280 + i * 120);
+    });
+  }, []);
+
+  return (
+    <ScrollView
+      style={{ flex: 1 }}
+      contentContainerStyle={{ paddingHorizontal: 28, paddingTop: 22, paddingBottom: 24 }}
+      showsVerticalScrollIndicator={false}
+    >
+      <Text style={{ fontSize: 52, textAlign: 'center', marginBottom: 26 }}>✨</Text>
+
+      <Animated.View style={{ opacity: headerFade, transform: [{ translateY: headerY }] }}>
+        <Text style={[T.title, { marginBottom: 12 }]}>
+          בהמשך נכיר{'\n'}את העסק שלך
+        </Text>
+        <Text style={[T.sub, { marginBottom: 30 }]}>
+          אחרי ההרשמה תוכל להוסיף פרטים כדי{'\n'}שהפוסטים יהיו מותאמים אליך באמת.
+        </Text>
+      </Animated.View>
+
+      <View style={{ gap: 10, marginBottom: 32 }}>
+        {TEASER_ITEMS.map((item, i) => (
+          <Animated.View
+            key={item.label}
+            style={{
+              opacity: itemAnims[i].opacity,
+              transform: [{ translateY: itemAnims[i].translateY }],
+              flexDirection: rtl.flexDirection,
+              alignItems: 'center',
+              gap: 14,
+              backgroundColor: C.card,
+              borderRadius: 14,
+              borderWidth: 1,
+              borderColor: C.border,
+              paddingVertical: 15,
+              paddingHorizontal: 18,
+            }}
+          >
+            <Text style={{ fontSize: 22 }}>{item.emoji}</Text>
+            <Text style={{ color: C.textLight, fontSize: 15, fontWeight: '500', flex: 1, textAlign: 'right' }}>
+              {item.label}
+            </Text>
+          </Animated.View>
+        ))}
+      </View>
+
+      <CTAButton label="המשך" onPress={onNext} />
+    </ScrollView>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SCREEN 7 — FINAL CTA
+// ═══════════════════════════════════════════════════════════════════════════════
+function StepFinalCTA({ onFinish }: { onFinish: () => void }) {
+  const rocketScale = useRef(new Animated.Value(0.2)).current;
+  const contentFade = useRef(new Animated.Value(0)).current;
+  const contentY    = useRef(new Animated.Value(24)).current;
+  const ctaFade     = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.sequence([
+      Animated.spring(rocketScale, { toValue: 1, useNativeDriver: true, speed: 20, bounciness: 16 }),
+      Animated.parallel([
+        Animated.timing(contentFade, { toValue: 1, duration: 400, useNativeDriver: true }),
+        Animated.spring(contentY,    { toValue: 0, useNativeDriver: true, speed: 38, bounciness: 6 }),
+      ]),
+      Animated.timing(ctaFade, { toValue: 1, duration: 350, useNativeDriver: true }),
+    ]).start();
+  }, []);
+
+  return (
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+      <GlowOrb size={440} color="rgba(124,58,237,0.20)" top={-90}  left={-100} />
+      <GlowOrb size={260} color="rgba(167,139,250,0.11)" bottom={70} right={-60} />
+
+      <Animated.Text style={{ fontSize: 74, marginBottom: 34, transform: [{ scale: rocketScale }] }}>
+        🚀
+      </Animated.Text>
+
+      <Animated.View style={{
+        alignItems: 'center', width: '100%',
+        opacity: contentFade, transform: [{ translateY: contentY }],
+      }}>
+        <Text style={[T.title, { marginBottom: 14 }]}>
+          השיווק שלך יכול לעבוד{'\n'}גם כשאתה עסוק
+        </Text>
+        <Text style={[T.sub, { marginBottom: 52 }]}>
+          התחל ליצור פוסטים מקצועיים{'\n'}לעסק שלך עם AI.
+        </Text>
+      </Animated.View>
+
+      <Animated.View style={{ width: '100%', opacity: ctaFade }}>
+        <CTAButton label="להמשיך" onPress={onFinish} />
+      </Animated.View>
+    </View>
   );
 }

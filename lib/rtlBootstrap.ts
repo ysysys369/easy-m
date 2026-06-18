@@ -17,6 +17,20 @@ const isExpoGo = Constants.executionEnvironment === 'storeClient';
 const APP_IS_RTL = true;
 
 /**
+ * Configure RTL synchronously before the first UI render.
+ * This is safe to call at module load and keeps native/dev/prod builds aligned.
+ */
+export function configureRTL(): void {
+  if (!APP_IS_RTL) return;
+
+  I18nManager.allowRTL(true);
+  I18nManager.forceRTL(true);
+  I18nManager.swapLeftAndRightInRTL(true);
+}
+
+configureRTL();
+
+/**
  * Bootstraps RTL mode for Expo Go environments.
  * If RTL is not enabled, it forces it and reloads the app.
  *
@@ -30,9 +44,7 @@ export async function bootstrapRTL(): Promise<boolean> {
 
   // Check if RTL is already enabled
   if (!I18nManager.isRTL) {
-    // Force RTL mode
-    I18nManager.allowRTL(true);
-    I18nManager.forceRTL(true);
+    configureRTL();
 
     // Reload app to apply changes
     // This is a one-time operation - after reload, isRTL will be true

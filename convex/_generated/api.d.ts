@@ -8,11 +8,15 @@
  * @module
  */
 
+import type * as aiSuggestionStore from "../aiSuggestionStore.js";
+import type * as aiSuggestionsActions from "../aiSuggestionsActions.js";
 import type * as auth from "../auth.js";
 import type * as businessProfiles from "../businessProfiles.js";
+import type * as businessWebsiteScan from "../businessWebsiteScan.js";
 import type * as crons from "../crons.js";
 import type * as files from "../files.js";
 import type * as generatePost from "../generatePost.js";
+import type * as generationCosts from "../generationCosts.js";
 import type * as http from "../http.js";
 import type * as notifications from "../notifications.js";
 import type * as onboardingAnswers from "../onboardingAnswers.js";
@@ -26,11 +30,15 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  aiSuggestionStore: typeof aiSuggestionStore;
+  aiSuggestionsActions: typeof aiSuggestionsActions;
   auth: typeof auth;
   businessProfiles: typeof businessProfiles;
+  businessWebsiteScan: typeof businessWebsiteScan;
   crons: typeof crons;
   files: typeof files;
   generatePost: typeof generatePost;
+  generationCosts: typeof generationCosts;
   http: typeof http;
   notifications: typeof notifications;
   onboardingAnswers: typeof onboardingAnswers;

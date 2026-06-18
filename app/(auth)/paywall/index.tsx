@@ -3,6 +3,8 @@ import { Check, ChevronLeft, X } from 'lucide-react-native';
 import { useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
+  Linking,
   ScrollView,
   Text,
   TouchableOpacity,
@@ -10,7 +12,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { WebViewModal } from '@/components/WebViewModal';
 import { IS_DEV_MODE, PRIVACY_URL, TERMS_URL } from '@/config/appConfig';
 import { useRevenueCat } from '@/contexts/RevenueCatContext';
 import { tw } from '@/lib/rtl';
@@ -20,9 +21,9 @@ import { tw } from '@/lib/rtl';
 // ============================================================================
 
 const FEATURES = [
-  'תכונה #1 - תיאור התכונה',
-  'תכונה #2 - תיאור התכונה',
-  'תכונה #3 - תיאור התכונה',
+  'תוכן שיווקי עקבי שמדבר בשפה של העסק',
+  'נוכחות מקצועית ברשתות בלי להתחיל מאפס',
+  'רעיונות, כתיבה ועיצוב בעזרת AI במקום אחד',
 ];
 
 // ============================================================================
@@ -47,8 +48,6 @@ export default function PaywallScreen() {
   );
   const [isPurchasing, setIsPurchasing] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
-  const [termsModalVisible, setTermsModalVisible] = useState(false);
-  const [privacyModalVisible, setPrivacyModalVisible] = useState(false);
 
   // ============================================================================
   // פעולות
@@ -102,12 +101,22 @@ export default function PaywallScreen() {
     }
   };
 
+  const openLegalUrl = async (url: string) => {
+    try {
+      const canOpen = await Linking.canOpenURL(url);
+      if (!canOpen) throw new Error('Cannot open legal URL');
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert('שגיאה', 'לא הצלחנו לפתוח את המסמך. נסה שוב בעוד רגע.');
+    }
+  };
+
   const handleTerms = () => {
-    setTermsModalVisible(true);
+    void openLegalUrl(TERMS_URL);
   };
 
   const handlePrivacy = () => {
-    setPrivacyModalVisible(true);
+    void openLegalUrl(PRIVACY_URL);
   };
 
   // ============================================================================
@@ -124,21 +133,6 @@ export default function PaywallScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-[#0a0a0a]" edges={['top', 'bottom']}>
-      {/* מודלים לתנאי שימוש ומדיניות פרטיות */}
-      <WebViewModal
-        visible={termsModalVisible}
-        url={TERMS_URL}
-        title="תנאי השימוש"
-        onClose={() => setTermsModalVisible(false)}
-      />
-
-      <WebViewModal
-        visible={privacyModalVisible}
-        url={PRIVACY_URL}
-        title="מדיניות הפרטיות"
-        onClose={() => setPrivacyModalVisible(false)}
-      />
-
       <ScrollView
         className="flex-1"
         contentContainerStyle={{ flexGrow: 1 }}
@@ -176,10 +170,11 @@ export default function PaywallScreen() {
         {/* כותרת */}
         <View className="px-6 pt-4 pb-6">
           <Text className="text-white text-3xl font-bold text-center mb-2">
-            כותרת מסך התשלום
+            שיווק שנראה מקצועי, כל שבוע
           </Text>
           <Text className="text-zinc-400 text-base text-center">
-            כותרת משנה למסך התשלום
+            Easy-M עוזרת לך לחסוך זמן, לשמור על מותג עקבי ולהופיע ברשתות כמו עסק
+            שיווקי רציני.
           </Text>
         </View>
 
@@ -191,7 +186,7 @@ export default function PaywallScreen() {
               className={`${tw.flexRow} items-center gap-3 mb-3`}
             >
               <View className="w-6 h-6 items-center justify-center">
-                <ChevronLeft size={20} color="#4fc3f7" />
+                <ChevronLeft size={20} color="#a78bfa" />
               </View>
               <Text className={`text-white text-base flex-1 ${tw.textStart}`}>
                 {feature}
@@ -201,9 +196,9 @@ export default function PaywallScreen() {
         </View>
 
         {/* כותרת תמחור */}
-        <View className="bg-white py-3 px-6">
-          <Text className="text-zinc-900 text-center font-semibold text-base">
-            הצטרף היום במחיר הטוב ביותר
+        <View className="mx-6 rounded-2xl border border-purple-500/30 bg-purple-500/10 py-3 px-5">
+          <Text className="text-purple-200 text-center font-semibold text-base">
+            בחר את המסלול שמתאים לקצב השיווק שלך
           </Text>
         </View>
 
@@ -215,7 +210,7 @@ export default function PaywallScreen() {
               onPress={() => setSelectedPlan('monthly')}
               className={`rounded-xl p-4 border-2 ${
                 selectedPlan === 'monthly'
-                  ? 'border-[#4fc3f7] bg-zinc-900'
+                  ? 'border-[#7C3AED] bg-purple-500/10'
                   : 'border-zinc-700 bg-zinc-900'
               }`}
             >
@@ -230,12 +225,12 @@ export default function PaywallScreen() {
                   <View
                     className={`w-6 h-6 rounded-full border-2 items-center justify-center ${
                       selectedPlan === 'monthly'
-                        ? 'border-[#4fc3f7] bg-[#4fc3f7]'
+                        ? 'border-[#7C3AED] bg-[#7C3AED]'
                         : 'border-zinc-600'
                     }`}
                   >
                     {selectedPlan === 'monthly' && (
-                      <Check size={14} color="#0a0a0a" strokeWidth={3} />
+                      <Check size={14} color="#fff" strokeWidth={3} />
                     )}
                   </View>
                 </View>
@@ -249,7 +244,7 @@ export default function PaywallScreen() {
               onPress={() => setSelectedPlan('annual')}
               className={`rounded-xl p-4 border-2 ${
                 selectedPlan === 'annual'
-                  ? 'border-[#4fc3f7] bg-zinc-900'
+                  ? 'border-[#7C3AED] bg-purple-500/10'
                   : 'border-zinc-700 bg-zinc-900'
               }`}
             >
@@ -262,12 +257,12 @@ export default function PaywallScreen() {
                   <View
                     className={`w-6 h-6 rounded-full border-2 items-center justify-center ${
                       selectedPlan === 'annual'
-                        ? 'border-[#4fc3f7] bg-[#4fc3f7]'
+                        ? 'border-[#7C3AED] bg-[#7C3AED]'
                         : 'border-zinc-600'
                     }`}
                   >
                     {selectedPlan === 'annual' && (
-                      <Check size={14} color="#0a0a0a" strokeWidth={3} />
+                      <Check size={14} color="#fff" strokeWidth={3} />
                     )}
                   </View>
                 </View>
@@ -278,7 +273,7 @@ export default function PaywallScreen() {
 
         {/* טקסט מידע */}
         <Text className="text-zinc-500 text-center text-sm px-6 mb-4">
-          הצטרף היום, בטל בכל עת.
+          מערכת אחת לתוכן, עיצוב וניהול נוכחות חברתית מקצועית. אפשר לבטל בכל עת.
         </Text>
 
         {/* כפתור המשך */}
@@ -286,14 +281,14 @@ export default function PaywallScreen() {
           <TouchableOpacity
             onPress={handleContinue}
             disabled={isPurchasing || isPreviewMode}
-            className={`bg-[#4fc3f7] rounded-xl py-4 items-center ${
+            className={`bg-[#7C3AED] rounded-xl py-4 items-center ${
               isPurchasing || isPreviewMode ? 'opacity-60' : ''
             }`}
           >
             {isPurchasing ? (
-              <ActivityIndicator color="#0a0a0a" />
+              <ActivityIndicator color="#fff" />
             ) : (
-              <Text className="text-[#0a0a0a] text-lg font-bold">המשך</Text>
+              <Text className="text-white text-lg font-bold">המשך</Text>
             )}
           </TouchableOpacity>
         </View>

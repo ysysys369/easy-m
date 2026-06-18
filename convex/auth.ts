@@ -14,7 +14,6 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
       const email = args.profile.email ?? '';
 
       if (args.existingUserId) {
-        console.log('[Auth] Updating existing user:', args.existingUserId, email);
         await ctx.db.patch(args.existingUserId, {
           email,
           emailVerified: args.profile.emailVerified ?? false,
@@ -24,7 +23,19 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
         return args.existingUserId;
       }
 
-      console.log('[Auth] Creating new user for email:', email);
+      const existingUser = email
+        ? (await ctx.db.query('users').collect()).find((user) => user.email === email)
+        : null;
+
+      if (existingUser) {
+        await ctx.db.patch(existingUser._id, {
+          emailVerified: args.profile.emailVerified ?? existingUser.emailVerified ?? false,
+          fullName: args.profile.name || existingUser.fullName || 'User',
+          updatedAt: now,
+        });
+        return existingUser._id;
+      }
+
       const userId = await ctx.db.insert('users', {
         email,
         emailVerified: args.profile.emailVerified ?? false,
@@ -34,7 +45,6 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
         createdAt: now,
         updatedAt: now,
       });
-      console.log('[Auth] New user created with id:', userId);
       return userId;
     },
   },

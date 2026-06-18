@@ -1,6 +1,13 @@
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
 
+const POST_RETENTION_DAYS = 30;
+const POST_RETENTION_MS = POST_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+function isPostWithinRetention(createdAt: number, now = Date.now()): boolean {
+  return now - createdAt <= POST_RETENTION_MS;
+}
+
 export const deletePost = mutation({
   args: { id: v.id('posts') },
   handler: async (ctx, { id }) => {
@@ -42,6 +49,33 @@ export const createPost = mutation({
   },
 });
 
+// Recent posts for the current user. Used by weekly AI suggestion generation
+// so the model can avoid repeating recent ideas.
+export const listMyRecentPosts = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    const cap = Math.max(1, Math.min(50, limit ?? 8));
+    const posts = await ctx.db
+      .query('posts')
+      .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
+      .order('desc')
+      .take(cap * 2);
+
+    return posts
+      .filter((post) => isPostWithinRetention(post.createdAt))
+      .slice(0, cap)
+      .map((post) => ({
+        _id: post._id,
+        content: post.content,
+        captionText: post.captionText ?? post.content,
+        createdAt: post.createdAt,
+      }));
+  },
+});
+
 export const getUserPosts = query({
   args: {},
   handler: async (ctx) => {
@@ -54,9 +88,12 @@ export const getUserPosts = query({
       .order('desc')
       .collect();
 
-    return posts.map((post) => ({
-      ...post,
-      captionText: post.captionText ?? post.content,
-    }));
+    return posts
+      .filter((post) => isPostWithinRetention(post.createdAt))
+      .map((post) => ({
+        ...post,
+        captionText: post.captionText ?? post.content,
+        retentionExpiresAt: post.createdAt + POST_RETENTION_MS,
+      }));
   },
 });

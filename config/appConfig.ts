@@ -31,7 +31,7 @@ export const APP_ENV: AppEnv = IS_DEV_MODE ? 'dev' : 'prod';
 // 👤 נדרשת פעולת משתמש: הגדר ידנית ל-true/false לפי הצורך:
 //    - הגדר ל-TRUE לבניות ייצור (תשלומים אמיתיים)
 //    - הגדר ל-FALSE לפיתוח/בדיקות (גישה חופשית לתכונות פרימיום)
-export const PAYMENT_SYSTEM_ENABLED = false;
+export const PAYMENT_SYSTEM_ENABLED = true;
 
 // 🚨 קריטי: דגל זה קובע האם התשלומים מדומים
 // ⚠️  אל תתן לאוטומציה לשנות את זה
@@ -44,7 +44,9 @@ export const MOCK_PAYMENTS = false;
 // קישורי תנאי שימוש ומדיניות פרטיות
 // ============================================================================
 
-// 👤 נדרשת פעולת משתמש: עדכן את הקישורים לדפי תנאי השימוש ומדיניות הפרטיות שלך
-// הקישורים צריכים להוביל לדפי Landing Page שלך (לא בתוך האפליקציה)
-export const TERMS_URL = 'https://yourdomain.com/terms';
-export const PRIVACY_URL = 'https://yourdomain.com/privacy';
+// Temporary public Google Docs links for App Store submission until a real
+// domain is purchased and connected.
+export const TERMS_URL =
+  'https://docs.google.com/document/d/1MItfjzwqCUCRHeyggID3fvmNE1NvP6JNk_igNM9gozo/edit?usp=sharing';
+export const PRIVACY_URL =
+  'https://docs.google.com/document/d/12NuX5iPw1qVLcbe3_XVPiVseot2YxiXgiSn7vJq--CE/edit?usp=sharing';

@@ -1,10 +1,8 @@
 import { useMutation, useQuery } from 'convex/react';
 import { useRouter } from 'expo-router';
 import {
-  CalendarDays,
   Copy,
   FileText,
-  Pencil,
   Plus,
   Sparkles,
   Trash2,
@@ -22,6 +20,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import { rtl } from '@/lib/rtl';
 
 type PostStatus = 'draft' | 'scheduled' | 'published';
 
@@ -49,9 +48,9 @@ const C = {
 };
 
 const TABS: { label: string; status: PostStatus }[] = [
-  { label: 'טיוטות',    status: 'draft'     },
-  { label: 'מתוזמנים', status: 'scheduled' },
   { label: 'פורסמו',    status: 'published' },
+  { label: 'מתוזמנים', status: 'scheduled' },
+  { label: 'טיוטות',    status: 'draft'     },
 ];
 
 function formatDate(ts: number) {
@@ -98,12 +97,10 @@ type Post = {
 
 function PostCard({
   post,
-  onEdit,
   onDelete,
   onDuplicate,
 }: {
   post: Post;
-  onEdit: () => void;
   onDelete: () => void;
   onDuplicate: () => void;
 }) {
@@ -126,7 +123,7 @@ function PostCard({
       }}
     >
       {/* Top row: image + content + status */}
-      <View style={{ flexDirection: 'row', gap: 12, padding: 12 }}>
+      <View style={{ flexDirection: rtl.flexDirection, gap: 12, padding: 12 }}>
         {/* Image (right side in RTL) */}
         {post.imageUri ? (
           <Image
@@ -150,12 +147,12 @@ function PostCard({
         {/* Right column: badge + business + caption */}
         <View style={{ flex: 1, justifyContent: 'space-between', minHeight: 72 }}>
           {/* Top row: status + business name */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <View style={{ flexDirection: rtl.flexDirection, alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
             <StatusBadge status={status} />
             {post.businessName && (
               <Text
                 numberOfLines={1}
-                style={{ color: '#e4e4e7', fontSize: 12, fontWeight: '700', textAlign: 'right', flexShrink: 1, marginLeft: 8 }}
+                style={{ color: '#e4e4e7', fontSize: 12, fontWeight: '700', textAlign: 'right', writingDirection: 'rtl', flexShrink: 1, marginStart: 8 }}
               >
                 {post.businessName}
               </Text>
@@ -165,13 +162,13 @@ function PostCard({
           {/* Caption preview - max 2 lines */}
           <Text
             numberOfLines={2}
-            style={{ color: '#d4d4d8', fontSize: 13, lineHeight: 19, textAlign: 'right' }}
+            style={{ color: '#d4d4d8', fontSize: 13, lineHeight: 19, textAlign: 'right', writingDirection: 'rtl' }}
           >
             {captionText}
           </Text>
 
           {/* Meta row: date + (time if scheduled) */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
+          <View style={{ flexDirection: rtl.flexDirection, alignItems: 'center', justifyContent: 'flex-start', gap: 8, marginTop: 6 }}>
             {status === 'scheduled' && (
               <Text style={{ color: C.purpleLight, fontSize: 11, fontWeight: '700' }}>
                 {formatTime(post.createdAt)}
@@ -188,20 +185,10 @@ function PostCard({
       <View style={{ height: 1, backgroundColor: C.border, marginHorizontal: 12 }} />
 
       {/* Actions row */}
-      <View style={{ flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 8 }}>
-        <Pressable
-          onPress={onEdit}
-          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 8 }}
-        >
-          <Pencil size={14} color={C.purpleLight} />
-          <Text style={{ color: C.purpleLight, fontSize: 12, fontWeight: '700' }}>ערוך</Text>
-        </Pressable>
-
-        <View style={{ width: 1, backgroundColor: C.border, marginVertical: 4 }} />
-
+      <View style={{ flexDirection: rtl.flexDirection, justifyContent: 'space-around', paddingVertical: 8 }}>
         <Pressable
           onPress={onDuplicate}
-          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 8 }}
+          style={{ flex: 1, flexDirection: rtl.flexDirection, alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 8 }}
         >
           <Copy size={14} color={C.textLight} />
           <Text style={{ color: C.textLight, fontSize: 12, fontWeight: '700' }}>שכפל</Text>
@@ -211,7 +198,7 @@ function PostCard({
 
         <Pressable
           onPress={onDelete}
-          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 8 }}
+          style={{ flex: 1, flexDirection: rtl.flexDirection, alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 8 }}
         >
           <Trash2 size={14} color={C.red} />
           <Text style={{ color: C.red, fontSize: 12, fontWeight: '700' }}>מחק</Text>
@@ -314,14 +301,11 @@ export default function Page2() {
     }
   };
 
-  const handleEdit = () =>
-    Alert.alert('עריכת פוסט', 'עריכת פוסטים תהיה זמינה בקרוב ✨');
-
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['top']}>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingBottom: 200 }}
+        contentContainerStyle={{ paddingBottom: 150 }}
         showsVerticalScrollIndicator={false}
       >
         <View style={{ paddingHorizontal: 20, paddingTop: 20 }}>
@@ -331,32 +315,21 @@ export default function Page2() {
             flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
             marginBottom: 24,
           }}>
-            {/* Calendar icon (top-left) */}
-            <Pressable
-              onPress={() => Alert.alert('בקרוב', 'תצוגת לוח שנה תהיה זמינה בקרוב 📅')}
-              style={{
-                width: 40, height: 40, borderRadius: 14,
-                backgroundColor: C.card, borderWidth: 1, borderColor: C.border,
-                alignItems: 'center', justifyContent: 'center', marginTop: 6,
-              }}
-            >
-              <CalendarDays size={18} color={C.textMid} />
-            </Pressable>
-
-            {/* Title block (right) */}
-            <View style={{ alignItems: 'flex-end', flex: 1, marginLeft: 12 }}>
-              <Text style={{ color: '#fff', fontSize: 28, fontWeight: '800', textAlign: 'right', marginBottom: 6 }}>
+            {/* Title block — first JSX = physical right in native RTL */}
+            <View style={{ flex: 1, marginEnd: 12 }}>
+              <Text style={{ color: '#fff', fontSize: 28, fontWeight: '800', textAlign: 'left', marginBottom: 6 }}>
                 הפוסטים שלך
               </Text>
-              <Text style={{ color: C.textMid, fontSize: 14, textAlign: 'right' }}>
+              <Text style={{ color: C.textMid, fontSize: 14, textAlign: 'left' }}>
                 נהל, תזמן ופרסם תוכן בקלות
               </Text>
             </View>
+
           </View>
 
           {/* ─── Tabs ─── */}
           <View style={{
-            flexDirection: 'row',
+            flexDirection: rtl.flexDirection,
             backgroundColor: C.card,
             borderRadius: 16,
             borderWidth: 1,
@@ -377,7 +350,7 @@ export default function Page2() {
                     borderRadius: 12,
                     backgroundColor: isActive ? C.purpleFaint : 'transparent',
                     alignItems: 'center',
-                    flexDirection: 'row',
+                    flexDirection: rtl.flexDirection,
                     justifyContent: 'center',
                     gap: 6,
                   }}
@@ -407,7 +380,7 @@ export default function Page2() {
           </View>
 
           {/* Active tab indicator (purple underline) */}
-          <View style={{ flexDirection: 'row', marginBottom: 20, marginTop: -16 }}>
+          <View style={{ flexDirection: rtl.flexDirection, marginBottom: 20, marginTop: -16 }}>
             {TABS.map((tab) => (
               <View key={tab.status} style={{ flex: 1, alignItems: 'center' }}>
                 <View style={{
@@ -432,7 +405,6 @@ export default function Page2() {
                 <PostCard
                   key={post._id}
                   post={post as Post}
-                  onEdit={handleEdit}
                   onDelete={() => handleDelete(post._id)}
                   onDuplicate={() => handleDuplicate(post as Post)}
                 />
@@ -446,8 +418,9 @@ export default function Page2() {
       {/* ─── Floating CTA ─── */}
       <View style={{
         position: 'absolute',
-        bottom: 100, // above the floating tab bar
-        left: 20, right: 20,
+        bottom: 150, // above the fixed tab bar
+        width: '100%',
+        paddingHorizontal: 20,
       }}>
         <Pressable
           onPress={goCreate}
@@ -455,7 +428,7 @@ export default function Page2() {
             backgroundColor: C.purple,
             borderRadius: 18,
             paddingVertical: 16,
-            flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+            flexDirection: rtl.flexDirection, alignItems: 'center', justifyContent: 'center', gap: 8,
             shadowColor: C.purple,
             shadowOffset: { width: 0, height: 8 },
             shadowOpacity: 0.55,

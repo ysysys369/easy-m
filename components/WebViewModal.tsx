@@ -33,7 +33,7 @@ export const WebViewModal: React.FC<WebViewModalProps> = ({
           <View
             className={`${tw.flexRow} items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4 py-3`}
           >
-            <Text className="flex-1 text-white text-lg font-semibold">
+            <Text className={`flex-1 text-white text-lg font-semibold ${tw.textStart}`}>
               {title}
             </Text>
             <TouchableOpacity

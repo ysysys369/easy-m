@@ -28,6 +28,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '@/convex/_generated/api';
+import { rtl } from '@/lib/rtl';
 
 const C = {
   bg:          '#0a0a0a',
@@ -58,7 +59,7 @@ function Row({
   return (
     <View
       style={{
-        flexDirection: 'row',
+        flexDirection: rtl.flexDirection,
         alignItems: 'flex-start',
         gap: 12,
         paddingVertical: 14,
@@ -82,10 +83,10 @@ function Row({
         <Icon size={17} color={C.purple} />
       </View>
       <View style={{ flex: 1, alignItems: 'flex-end' }}>
-        <Text style={{ color: C.textMid, fontSize: 11, fontWeight: '600', letterSpacing: 0.6, marginBottom: 4 }}>
+        <Text style={{ color: C.textMid, fontSize: 11, fontWeight: '600', letterSpacing: 0.6, marginBottom: 4, textAlign: 'right', writingDirection: 'rtl' }}>
           {label}
         </Text>
-        <Text selectable style={{ color: '#e4e4e7', fontSize: 14, lineHeight: 21, textAlign: 'right' }}>
+        <Text selectable style={{ color: '#e4e4e7', fontSize: 14, lineHeight: 21, textAlign: 'right', writingDirection: 'rtl' }}>
           {value}
         </Text>
       </View>
@@ -118,11 +119,11 @@ function SectionCard({ children }: { children: React.ReactNode }) {
 
 function SectionTitle({ title, icon: Icon }: { title: string; icon: IconType }) {
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 10, marginTop: 6 }}>
-      <Text style={{ color: C.textLight, fontSize: 12, fontWeight: '700', letterSpacing: 0.8, textAlign: 'right' }}>
+    <View style={{ flexDirection: rtl.flexDirection, alignItems: 'center', justifyContent: 'flex-start', gap: 8, marginBottom: 10, marginTop: 6 }}>
+      <Icon size={14} color={C.purpleLight} />
+      <Text style={{ color: C.textLight, fontSize: 12, fontWeight: '700', letterSpacing: 0.8, textAlign: 'right', writingDirection: 'rtl' }}>
         {title}
       </Text>
-      <Icon size={14} color={C.purpleLight} />
     </View>
   );
 }
@@ -132,6 +133,7 @@ export default function BusinessDetails() {
   const profile = useQuery(api.businessProfiles.getMyBusinessProfile);
 
   const goToEdit = () => router.push('/(authenticated)/business-profile');
+  const goToImages = () => router.push('/(authenticated)/business-images');
 
   if (profile === undefined) {
     return (
@@ -146,9 +148,9 @@ export default function BusinessDetails() {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['top']}>
         <View style={{ flex: 1, paddingHorizontal: 24, paddingTop: 24 }}>
-          <Pressable onPress={() => router.back()} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-end', marginBottom: 30 }}>
-            <Text style={{ color: C.textMid, fontSize: 14 }}>חזרה</Text>
+          <Pressable onPress={() => router.back()} style={{ flexDirection: rtl.flexDirection, alignItems: 'center', gap: 6, alignSelf: 'flex-end', marginBottom: 30 }}>
             <ArrowRight size={16} color={C.textMid} />
+            <Text style={{ color: C.textMid, fontSize: 14, textAlign: 'right', writingDirection: 'rtl' }}>חזרה</Text>
           </Pressable>
 
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16 }}>
@@ -170,11 +172,11 @@ export default function BusinessDetails() {
               style={{
                 backgroundColor: C.purple, borderRadius: 16,
                 paddingVertical: 16, paddingHorizontal: 36,
-                flexDirection: 'row', alignItems: 'center', gap: 10,
+                flexDirection: rtl.flexDirection, alignItems: 'center', gap: 10,
                 shadowColor: C.purple, shadowOffset: { width: 0, height: 6 },
                 shadowOpacity: 0.5, shadowRadius: 14, elevation: 8,
-              }}
-            >
+            }}
+          >
               <Sparkles size={18} color="#fff" />
               <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>צור פרופיל עסקי</Text>
             </Pressable>
@@ -188,19 +190,16 @@ export default function BusinessDetails() {
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['top']}>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        // Bottom tab bar overlays the screen — generous padding keeps the
+        // CTAs above it so they stay tappable.
+        contentContainerStyle={{ paddingBottom: 150 }}
         showsVerticalScrollIndicator={false}
       >
         <View style={{ paddingHorizontal: 20, paddingTop: 20 }}>
 
           {/* Top bar */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
-            <Pressable onPress={() => router.back()} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={{ color: C.textMid, fontSize: 14 }}>חזרה</Text>
-              <ArrowRight size={16} color={C.textMid} />
-            </Pressable>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <Text style={{ color: '#fff', fontSize: 24, fontWeight: '800' }}>פרטי העסק</Text>
+          <View style={{ flexDirection: rtl.flexDirection, alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+            <View style={{ flexDirection: rtl.flexDirection, alignItems: 'center', gap: 10 }}>
               <View style={{
                 width: 40, height: 40, borderRadius: 12,
                 backgroundColor: C.purpleFaint, borderWidth: 1, borderColor: C.purpleBdr,
@@ -208,7 +207,12 @@ export default function BusinessDetails() {
               }}>
                 <Building2 size={18} color={C.purple} />
               </View>
+              <Text style={{ color: '#fff', fontSize: 24, fontWeight: '800', textAlign: 'right', writingDirection: 'rtl' }}>פרטי העסק</Text>
             </View>
+            <Pressable onPress={() => router.back()} style={{ flexDirection: rtl.flexDirection, alignItems: 'center', gap: 6 }}>
+              <ArrowRight size={16} color={C.textMid} />
+              <Text style={{ color: C.textMid, fontSize: 14, textAlign: 'right', writingDirection: 'rtl' }}>חזרה</Text>
+            </Pressable>
           </View>
 
           {/* ── Logo & name header ── */}
@@ -231,11 +235,11 @@ export default function BusinessDetails() {
                 <Camera size={32} color={C.purple} />
               </View>
             )}
-            <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', textAlign: 'center' }}>
+            <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', textAlign: 'right', writingDirection: 'rtl', alignSelf: 'stretch' }}>
               {profile.businessName}
             </Text>
             {profile.businessType && (
-              <Text style={{ color: C.purpleLight, fontSize: 13, fontWeight: '600', marginTop: 4 }}>
+              <Text style={{ color: C.purpleLight, fontSize: 13, fontWeight: '600', marginTop: 4, textAlign: 'right', writingDirection: 'rtl', alignSelf: 'stretch' }}>
                 {profile.businessType}
               </Text>
             )}
@@ -281,7 +285,7 @@ export default function BusinessDetails() {
                 borderWidth: 1, borderColor: C.purpleBdr,
                 padding: 14, marginBottom: 16,
               }}>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'flex-end' }}>
+                <View style={{ flexDirection: rtl.flexDirection, flexWrap: 'wrap', gap: 8, justifyContent: 'flex-start' }}>
                   {profile.images.map((uri, i) => (
                     <Image
                       key={`${uri}-${i}`}
@@ -300,6 +304,32 @@ export default function BusinessDetails() {
             </>
           )}
 
+          {/* ── Manage business images — direct shortcut to the dedicated
+              media manager so the user doesn't have to re-walk the entire
+              onboarding flow just to edit photos. ── */}
+          <Pressable
+            onPress={goToImages}
+            accessibilityLabel="נהל תמונות עסק"
+            style={{
+              backgroundColor: C.cardInner,
+              borderRadius: 18,
+              borderWidth: 1.5,
+              borderColor: C.purpleBdr,
+              paddingVertical: 16,
+              marginTop: 12,
+              flexDirection: rtl.flexDirection,
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 10,
+            }}
+          >
+            <ImageIcon size={17} color={C.purpleLight} />
+            <Text style={{ color: C.purpleLight, fontSize: 16, fontWeight: '700' }}>
+              נהל תמונות עסק
+            </Text>
+            <ChevronRight size={18} color={C.purpleLight} />
+          </Pressable>
+
           {/* ── Edit button ── */}
           <Pressable
             onPress={goToEdit}
@@ -307,8 +337,8 @@ export default function BusinessDetails() {
               backgroundColor: C.purple,
               borderRadius: 18,
               paddingVertical: 16,
-              marginTop: 12,
-              flexDirection: 'row',
+              marginTop: 10,
+              flexDirection: rtl.flexDirection,
               alignItems: 'center',
               justifyContent: 'center',
               gap: 10,

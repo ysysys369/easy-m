@@ -15,6 +15,20 @@ try {
   Notifications = null;
 }
 
+/**
+ * Remote (Apple Push) is disabled because the app is signed by a personal
+ * Apple Developer team, which cannot use the `aps-environment` entitlement.
+ *
+ * When you upgrade to a paid Apple Developer account:
+ *   1. Remove the `./plugins/withoutPushNotifications` entry from app.json
+ *   2. Set REMOTE_PUSH_ENABLED to true here
+ *   3. Run `npx expo prebuild --clean && npx expo run:ios --device`
+ *
+ * Local scheduled notifications (after-generation, weekly reminder) DO still
+ * work in iOS Simulator and on-device without the entitlement.
+ */
+const REMOTE_PUSH_ENABLED = false;
+
 const WEEKLY_REMINDER_ID = 'easym-weekly-reminder';
 
 /** Configure handler once on app load */
@@ -139,7 +153,8 @@ export function useNotificationsBootstrap() {
 
       if (!Notifications) return;
 
-      // 2. Request permission
+      // 2. Request permission (needed for BOTH remote push and local scheduled
+      //    notifications, but local notifications work without aps-environment).
       const existing = await Notifications.getPermissionsAsync();
       let status = existing.status;
       if (status !== 'granted') {
@@ -151,15 +166,25 @@ export function useNotificationsBootstrap() {
         return;
       }
 
-      // 3. Get token and save
-      const token = await getExpoPushToken();
-      if (token) {
-        await savePushToken({ token, notificationsEnabled: true }).catch(() => {});
+      // 3. Remote push: only attempt when aps-environment is available.
+      //    On a personal Apple Developer team this is disabled — getExpoPushToken
+      //    would throw a useless error, and the server-side inactivity cron would
+      //    have no valid token to push to anyway. We mark notifications enabled
+      //    so local scheduled reminders still run.
+      if (REMOTE_PUSH_ENABLED) {
+        const token = await getExpoPushToken();
+        if (token) {
+          await savePushToken({ token, notificationsEnabled: true }).catch(() => {});
+        } else {
+          await setEnabled({ enabled: true }).catch(() => {});
+        }
       } else {
+        // Mark enabled so the cron's "skip if disabled" guard doesn't apply,
+        // but no token is saved — the cron's "skip if no token" guard handles it.
         await setEnabled({ enabled: true }).catch(() => {});
       }
 
-      // 4. Schedule the recurring weekly reminder
+      // 4. Schedule the recurring weekly LOCAL reminder
       await scheduleWeeklyReminder();
     })().catch(() => { /* silently fail — never break the app */ });
   }, [isAuthenticated, markAppOpened, savePushToken, setEnabled]);

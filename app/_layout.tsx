@@ -3,14 +3,41 @@ import { ConvexReactClient } from 'convex/react';
 import { Slot } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { Text, TextInput, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import '../global.css';
 
+import { AppLaunchSplash } from '@/components/AppLaunchSplash';
+import { DevUiOverrideProvider } from '@/contexts/DevUiOverrideContext';
 import { RevenueCatProvider } from '@/contexts/RevenueCatContext';
 import { configureNotificationHandler } from '@/lib/notifications';
-import { bootstrapRTL } from '@/lib/rtlBootstrap';
+import { bootstrapRTL, configureRTL } from '@/lib/rtlBootstrap';
 import { getConvexUrl } from '@/utils/convexConfig';
+
+configureRTL();
+const rtlTextDefaults = {
+  textAlign: 'right' as const,
+  writingDirection: 'rtl' as const,
+};
+
+// Global Hebrew defaults. Explicit component styles still win, while plain
+// Text/TextInput elements inherit a correct RTL baseline.
+(Text as unknown as { defaultProps?: { style?: unknown } }).defaultProps = {
+  ...((Text as unknown as { defaultProps?: { style?: unknown } }).defaultProps ?? {}),
+  style: [
+    rtlTextDefaults,
+    (Text as unknown as { defaultProps?: { style?: unknown } }).defaultProps?.style,
+  ],
+};
+
+(TextInput as unknown as { defaultProps?: { style?: unknown } }).defaultProps = {
+  ...((TextInput as unknown as { defaultProps?: { style?: unknown } }).defaultProps ?? {}),
+  style: [
+    rtlTextDefaults,
+    (TextInput as unknown as { defaultProps?: { style?: unknown } }).defaultProps?.style,
+  ],
+};
 
 // Configure how foreground notifications are displayed (no-op if module missing)
 configureNotificationHandler();
@@ -53,11 +80,18 @@ const secureStorage = {
 };
 
 export default function RootLayout() {
+  const [showLaunchSplash, setShowLaunchSplash] = useState(true);
+
   // Bootstrap RTL for Expo Go on first mount
   useEffect(() => {
     bootstrapRTL().catch(() => {
       // Silently handle errors - bootstrap will reload app if needed
     });
+  }, []);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => setShowLaunchSplash(false), 1800);
+    return () => clearTimeout(timeout);
   }, []);
 
   return (
@@ -66,14 +100,20 @@ export default function RootLayout() {
       {/* זה עובד ב-Expo Go, בניגוד להגדרות ב-app.json */}
       <StatusBar style="light" translucent={false} backgroundColor="#0a0a0a" />
 
-      {/* ספק האימות של Convex עוטף את כל האפליקציה ומנהל את מצב ההתחברות */}
-      <ConvexAuthProvider client={convex} storage={secureStorage}>
-        {/* ספק RevenueCat לניהול מנויים ורכישות */}
-        <RevenueCatProvider>
-          {/* Slot מעבד את הראוטים (Routes) הילדים - ה-Layouts הפנימיים מנהלים את הניווט שלהם */}
-          <Slot />
-        </RevenueCatProvider>
-      </ConvexAuthProvider>
+      <View style={{ flex: 1, direction: 'rtl' }}>
+        {/* ספק האימות של Convex עוטף את כל האפליקציה ומנהל את מצב ההתחברות */}
+        <ConvexAuthProvider client={convex} storage={secureStorage}>
+          {/* ספק RevenueCat לניהול מנויים ורכישות */}
+          <RevenueCatProvider>
+            {/* DEV-only: override context for UI state testing */}
+            <DevUiOverrideProvider>
+              {/* Slot מעבד את הראוטים (Routes) הילדים - ה-Layouts הפנימיים מנהלים את הניווט שלהם */}
+              <Slot />
+            </DevUiOverrideProvider>
+          </RevenueCatProvider>
+        </ConvexAuthProvider>
+      </View>
+      <AppLaunchSplash visible={showLaunchSplash} />
     </SafeAreaProvider>
   );
 }

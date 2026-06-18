@@ -20,6 +20,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LogoTopLeft } from '@/components/LogoTopLeft';
 import { api } from '@/convex/_generated/api';
+import { rtl } from '@/lib/rtl';
 
 // ─── צבעים ─────────────────────────────────────────────────────────────────
 const C = {
@@ -80,7 +81,7 @@ function InfoRow({
     <View>
       <View
         style={{
-          flexDirection: 'row',
+          flexDirection: rtl.flexDirection,
           alignItems: 'flex-start',
           gap: 12,
           paddingVertical: 14,
@@ -94,6 +95,7 @@ function InfoRow({
               fontSize: 15,
               fontWeight: value ? '600' : '400',
               textAlign: 'right',
+              writingDirection: 'rtl',
               lineHeight: 22,
             }}
           >
@@ -104,6 +106,7 @@ function InfoRow({
               color: C.textMid,
               fontSize: 11,
               textAlign: 'right',
+              writingDirection: 'rtl',
               marginTop: 3,
               letterSpacing: 0.4,
             }}
@@ -164,9 +167,9 @@ function InfoCard({
       {/* כותרת כרטיס */}
       <View
         style={{
-          flexDirection: 'row',
+          flexDirection: rtl.flexDirection,
           alignItems: 'center',
-          justifyContent: 'flex-end',
+          justifyContent: 'flex-start',
           gap: 8,
           marginBottom: 4,
           paddingBottom: 14,
@@ -174,7 +177,7 @@ function InfoCard({
           borderBottomColor: C.border,
         }}
       >
-        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '800' }}>{title}</Text>
+        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '800', textAlign: 'right', writingDirection: 'rtl' }}>{title}</Text>
         <View
           style={{
             width: 32,
@@ -225,7 +228,7 @@ export default function ProfileScreen() {
       <LogoTopLeft />
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingBottom: 52 }}
+        contentContainerStyle={{ paddingBottom: 150 }}
         showsVerticalScrollIndicator={false}
       >
         <View style={{ paddingHorizontal: 20, paddingTop: 80 }}>
@@ -233,14 +236,14 @@ export default function ProfileScreen() {
           {/* ─── כותרת ─── */}
           <View
             style={{
-              flexDirection: 'row',
+              flexDirection: rtl.flexDirection,
               alignItems: 'center',
-              justifyContent: 'flex-end',
+              justifyContent: 'flex-start',
               gap: 10,
               marginBottom: 28,
             }}
           >
-            <Text style={{ color: '#fff', fontSize: 28, fontWeight: '800' }}>
+            <Text style={{ color: '#fff', fontSize: 28, fontWeight: '800', textAlign: 'right', writingDirection: 'rtl' }}>
               הפרופיל שלי
             </Text>
             <View
@@ -318,7 +321,7 @@ export default function ProfileScreen() {
               backgroundColor: C.purple,
               borderRadius: 22,
               paddingVertical: 18,
-              flexDirection: 'row',
+              flexDirection: rtl.flexDirection,
               alignItems: 'center',
               justifyContent: 'center',
               gap: 10,

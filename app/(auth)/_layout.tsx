@@ -2,6 +2,7 @@ import { useConvexAuth } from 'convex/react';
 import { Redirect, Slot, useLocalSearchParams, useSegments } from 'expo-router';
 import { useEffect } from 'react';
 
+import { AppLaunchSplash } from '@/components/AppLaunchSplash';
 import { IS_DEV_MODE } from '@/config/appConfig';
 
 export default function AuthRoutesLayout() {
@@ -9,40 +10,9 @@ export default function AuthRoutesLayout() {
   const segments = useSegments();
   const { preview } = useLocalSearchParams<{ preview?: string }>();
 
-  // #region agent log
-  useEffect(() => {
-    fetch('http://127.0.0.1:7243/ingest/1ea5e66d-d528-4bae-a881-fff31ff26db7', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        location: 'app/(auth)/_layout.tsx:mount',
-        message: 'Auth layout state',
-        data: { isAuthenticated, isLoading, segments: segments, preview },
-        timestamp: Date.now(),
-        sessionId: 'debug-session',
-        hypothesisId: 'B,E',
-      }),
-    }).catch(() => {});
-  }, [isAuthenticated, isLoading, segments, preview]);
-  // #endregion
-
   // המתנה לטעינת סטטוס האימות
   if (isLoading) {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/1ea5e66d-d528-4bae-a881-fff31ff26db7', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        location: 'app/(auth)/_layout.tsx:loading',
-        message: 'Auth loading - returning null',
-        data: {},
-        timestamp: Date.now(),
-        sessionId: 'debug-session',
-        hypothesisId: 'B',
-      }),
-    }).catch(() => {});
-    // #endregion
-    return null;
+    return <AppLaunchSplash />;
   }
 
   // בדיקה אם זה מצב תצוגה מקדימה (preview mode)
@@ -55,7 +25,8 @@ export default function AuthRoutesLayout() {
   const segmentStrings = segments as string[];
   const isPaywallRoute = segmentStrings.includes('paywall');
   const isOnboardingRoute = segmentStrings.includes('onboarding');
-  const isAllowedForAuthenticated = isPaywallRoute || isOnboardingRoute || isPreviewMode;
+  const isAllowedForAuthenticated =
+    isPaywallRoute || isOnboardingRoute || isPreviewMode;
 
   // אם המשתמש כבר מחובר, הפנה אותו לאזור המאומת
   // אלא אם הוא במסלול paywall או במצב תצוגה מקדימה

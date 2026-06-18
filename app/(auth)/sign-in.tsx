@@ -78,7 +78,7 @@ function StyledInput({
       </Text>
       <View
         style={{
-          flexDirection: 'row',
+          flexDirection: rtl.flexDirection,
           alignItems: 'center',
           backgroundColor: C.card,
           borderWidth: 1.5,
@@ -92,10 +92,8 @@ function StyledInput({
           elevation:     focused ? 4 : 0,
         }}
       >
-        {/* trailing slot (eye toggle) */}
-        {trailingSlot && (
-          <View style={{ paddingLeft: 4 }}>{trailingSlot}</View>
-        )}
+        {/* leading icon (right/start side in RTL) */}
+        <View style={{ paddingEnd: 4 }}>{leadingIcon}</View>
 
         <TextInput
           style={{
@@ -104,6 +102,7 @@ function StyledInput({
             fontSize: 15,
             paddingVertical: Platform.OS === 'ios' ? 16 : 12,
             textAlign: rtl.textAlign,
+            writingDirection: 'rtl',
           }}
           value={value}
           onChangeText={onChangeText}
@@ -118,8 +117,10 @@ function StyledInput({
           onBlur={() => setFocused(false)}
         />
 
-        {/* leading icon (right side in RTL) */}
-        <View style={{ paddingRight: 4 }}>{leadingIcon}</View>
+        {/* trailing slot (left/end side in RTL) */}
+        {trailingSlot && (
+          <View style={{ paddingStart: 4 }}>{trailingSlot}</View>
+        )}
       </View>
     </Animated.View>
   );
@@ -132,13 +133,6 @@ export default function SignInScreen() {
   const router = useRouter();
   const { preview } = useLocalSearchParams<{ preview?: string }>();
   const isPreviewMode = IS_DEV_MODE && preview === 'true';
-
-  // #region agent log
-  useEffect(() => {
-    // biome-ignore format: debug log
-    fetch('http://127.0.0.1:7243/ingest/1ea5e66d-d528-4bae-a881-fff31ff26db7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/(auth)/sign-in.tsx:render',message:'Sign-in screen rendered',data:{},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,E'})}).catch(()=>{});
-  }, []);
-  // #endregion
 
   const [email,        setEmail]        = useState('');
   const [password,     setPassword]     = useState('');
@@ -161,14 +155,22 @@ export default function SignInScreen() {
     loadRememberedEmail();
   }, []);
 
-  const handleSuccess = async () => {
+  const persistEmail = async () => {
     if (rememberMe) {
       await AsyncStorage.setItem(REMEMBERED_EMAIL_KEY, email);
     } else {
       await AsyncStorage.removeItem(REMEMBERED_EMAIL_KEY);
     }
-    console.log('[Auth] Success — navigating to authenticated area');
+  };
+
+  const handleSignInSuccess = async () => {
+    await persistEmail();
     router.replace('/(authenticated)');
+  };
+
+  const handleNewUserSuccess = async () => {
+    await persistEmail();
+    router.replace('/(auth)/onboarding');
   };
 
   const onSignInPress = async () => {
@@ -178,25 +180,19 @@ export default function SignInScreen() {
       return;
     }
     setLoading(true);
-    console.log('[Auth] Attempting signIn for:', email);
     try {
       await signIn('password', { email, password, flow: 'signIn' });
-      console.log('[Auth] signIn succeeded');
-      await handleSuccess();
+      await handleSignInSuccess();
     } catch (err: unknown) {
       const error = err as { message?: string };
       const errorMessage = error.message || '';
-      console.log('[Auth] signIn error:', errorMessage);
       if (errorMessage.includes('InvalidAccountId') || errorMessage.includes('Could not find')) {
-        console.log('[Auth] Account not found, attempting signUp for:', email);
         try {
           await signIn('password', { email, password, flow: 'signUp' });
-          console.log('[Auth] signUp succeeded — new account created');
-          await handleSuccess();
+          await handleNewUserSuccess();
         } catch (signUpErr: unknown) {
           const signUpError = signUpErr as { message?: string };
           const signUpMsg = signUpError.message || '';
-          console.log('[Auth] signUp error:', signUpMsg);
           if (signUpMsg.includes('AccountAlreadyExists')) {
             Alert.alert('שגיאה', 'הסיסמה שגויה לחשבון הקיים');
           } else {
@@ -250,15 +246,20 @@ export default function SignInScreen() {
         style={{
           position: 'absolute',
           top: -60,
-          left: '50%',
-          marginLeft: -140,
-          width: 280,
-          height: 280,
-          borderRadius: 140,
-          backgroundColor: 'rgba(124,58,237,0.13)',
-          transform: [{ scaleY: 0.5 }],
+          width: '100%',
+          alignItems: 'center',
         }}
-      />
+      >
+        <View
+          style={{
+            width: 280,
+            height: 280,
+            borderRadius: 140,
+            backgroundColor: 'rgba(124,58,237,0.13)',
+            transform: [{ scaleY: 0.5 }],
+          }}
+        />
+      </View>
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -371,8 +372,8 @@ export default function SignInScreen() {
             {/* ── זכור אותי ── */}
             <Animated.View
               style={{
-                flexDirection: 'row',
-                justifyContent: 'flex-end',
+                flexDirection: rtl.flexDirection,
+                justifyContent: 'flex-start',
                 alignItems: 'center',
                 marginBottom: 28,
                 opacity: passAnim,
@@ -381,7 +382,7 @@ export default function SignInScreen() {
               <Pressable
                 onPress={() => setRememberMe(!rememberMe)}
                 disabled={loading}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                style={{ flexDirection: rtl.flexDirection, alignItems: 'center', gap: 8 }}
               >
                 <Text style={{ color: '#a1a1aa', fontSize: 14 }}>זכור אותי</Text>
                 <View
@@ -440,7 +441,7 @@ export default function SignInScreen() {
             </Animated.View>
 
             {/* ── קישור הרשמה ── */}
-            <Animated.View style={{ flexDirection: 'row', justifyContent: 'center', gap: 6, opacity: btnAnim }}>
+            <Animated.View style={{ flexDirection: rtl.flexDirection, justifyContent: 'center', gap: 6, opacity: btnAnim }}>
               <Text style={{ color: C.textMid, fontSize: 14 }}>אין לך חשבון?</Text>
               {isPreviewMode ? (
                 <Text style={{ color: '#52525b', fontSize: 14, fontWeight: '600' }}>הירשם</Text>

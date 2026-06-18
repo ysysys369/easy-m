@@ -1,9 +1,18 @@
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
 
-// ─── Weekly post limit config ───────────────────────────────────────────────
-export const WEEKLY_POST_LIMIT = 3;
+// ─── Post limit config ───────────────────────────────────────────────────────
+export const WEEKLY_POST_LIMIT = 3;  // paid users: 3 per rolling 7-day window
+export const FREE_POST_LIMIT = 1;    // free users: 1 lifetime gift post
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+function assertDevQuotaResetAllowed(): void {
+  const isDevelopmentRuntime = process.env.EASY_M_RUNTIME_ENV === 'development';
+
+  if (!isDevelopmentRuntime) {
+    throw new Error('DEV_ONLY_QUOTA_RESET_DISABLED');
+  }
+}
 
 /**
  * Compute the effective weekly counter for a user.
@@ -108,7 +117,9 @@ export const getPostsGenerated = query({
 });
 
 /**
- * Weekly post status — returns the effective remaining count.
+ * Post status — returns the effective remaining count.
+ * Paid users: 3 posts per rolling 7-day window.
+ * Free users: 1 lifetime gift post (based on postsGenerated, not weekly).
  * Read-only: applies the rolling-week logic without writing.
  */
 export const getWeeklyPostStatus = query({
@@ -122,13 +133,63 @@ export const getWeeklyPostStatus = query({
       .query('users')
       .withIndex('by_email', (q) => q.eq('email', identity.email ?? ''))
       .unique();
-    const { used, resetAt } = effectiveWeeklyUsed(user, Date.now());
-    return {
-      used,
-      remaining: Math.max(0, WEEKLY_POST_LIMIT - used),
-      limit: WEEKLY_POST_LIMIT,
-      resetAt,
-    };
+
+    const isPaid = user?.userType === 'paid';
+
+    if (isPaid) {
+      // Paid: rolling 7-day window of 3 posts
+      const { used, resetAt } = effectiveWeeklyUsed(user, Date.now());
+      return {
+        used,
+        remaining: Math.max(0, WEEKLY_POST_LIMIT - used),
+        limit: WEEKLY_POST_LIMIT,
+        resetAt,
+      };
+    } else {
+      // Free: 1 lifetime gift post
+      const lifetimeUsed = user?.postsGenerated ?? 0;
+      return {
+        used: lifetimeUsed,
+        remaining: Math.max(0, FREE_POST_LIMIT - lifetimeUsed),
+        limit: FREE_POST_LIMIT,
+        resetAt: 0,
+      };
+    }
+  },
+});
+
+/**
+ * Sync subscription status from RevenueCat (client-side) to the DB.
+ * Called from the app layout whenever isPremium state resolves.
+ */
+export const syncSubscriptionStatus = mutation({
+  args: { isPremium: v.boolean() },
+  handler: async (ctx, { isPremium }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return;
+    const email = identity.email ?? '';
+    const now = Date.now();
+    const user = await ctx.db
+      .query('users')
+      .withIndex('by_email', (q) => q.eq('email', email))
+      .unique();
+    const newUserType = isPremium ? 'paid' : 'free';
+    if (user) {
+      if (user.userType !== newUserType) {
+        await ctx.db.patch(user._id, { userType: newUserType, updatedAt: now });
+      }
+    } else {
+      await ctx.db.insert('users', {
+        email,
+        emailVerified: identity.emailVerified ?? false,
+        fullName: identity.name ?? 'User',
+        role: 'user',
+        userType: newUserType,
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
   },
 });
 
@@ -178,26 +239,34 @@ export const incrementPostsGenerated = mutation({
   },
 });
 
+async function resetCurrentUserPostQuotaForDev(ctx: { db: any; auth: any }) {
+  assertDevQuotaResetAllowed();
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new Error('לא מחובר');
+  const user = await ctx.db
+    .query('users')
+    .withIndex('by_email', (q: any) => q.eq('email', identity.email ?? ''))
+    .unique();
+  if (!user) return { reset: false };
+  const now = Date.now();
+  await ctx.db.patch(user._id, {
+    postsGenerated: 0,
+    postsUsedThisWeek: 0,
+    lastResetDate: now,
+    updatedAt: now,
+  });
+  return { reset: true };
+}
+
 /**
- * Dev/test helper — resets BOTH lifetime + weekly counters so the user
- * can keep testing generation flows.
+ * Dev/test helper — resets BOTH lifetime + weekly counters so the current user
+ * can keep testing generation flows. Disabled unless the Convex deployment is
+ * explicitly configured as development.
  */
-export const resetPostsGenerated = mutation({
+export const resetMyPostQuotaForDev = mutation({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error('לא מחובר');
-    const user = await ctx.db
-      .query('users')
-      .withIndex('by_email', (q) => q.eq('email', identity.email ?? ''))
-      .unique();
-    if (!user) return;
-    await ctx.db.patch(user._id, {
-      postsGenerated: 0,
-      postsUsedThisWeek: 0,
-      lastResetDate: Date.now(),
-      updatedAt: Date.now(),
-    });
+    return await resetCurrentUserPostQuotaForDev(ctx);
   },
 });
 
@@ -352,41 +421,53 @@ export const deleteMyAccount = mutation({
   args: {},
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new Error('לא מחובר למערכת');
-    }
+    if (!identity) throw new Error('לא מחובר למערכת');
 
-    // קבלת מזהה המשתמש מה-identity
     const userId = identity.subject;
-    let deletedCount = 0;
+    const email = identity.email ?? '';
 
-    // כאן תוכל להוסיף מחיקה של טבלאות נוספות שקשורות למשתמש
-    // לדוגמה:
-    // const userPosts = await ctx.db
-    //   .query('posts')
-    //   .withIndex('by_user', (q) => q.eq('userId', userId))
-    //   .collect();
-    // for (const post of userPosts) {
-    //   await ctx.db.delete(post._id);
-    //   deletedCount += 1;
-    // }
+    // Delete posts
+    const posts = await ctx.db
+      .query('posts')
+      .withIndex('by_userId', (q) => q.eq('userId', userId))
+      .collect();
+    for (const doc of posts) await ctx.db.delete(doc._id);
 
-    // מחיקת המשתמש מטבלת המשתמשים
-    // הערה: Convex Auth מנהל את טבלת המשתמשים, אך אנחנו יכולים למחוק את הרשומה
-    const user = await ctx.db
-      .query('users')
-      .filter((q) => q.eq(q.field('_id'), userId))
-      .first();
+    // Delete onboarding answers
+    const onboarding = await ctx.db
+      .query('onboardingAnswers')
+      .withIndex('by_userId', (q) => q.eq('userId', userId))
+      .collect();
+    for (const doc of onboarding) await ctx.db.delete(doc._id);
 
-    if (user) {
-      await ctx.db.delete(user._id);
-      deletedCount += 1;
+    // Delete business profiles
+    const profiles = await ctx.db
+      .query('businessProfiles')
+      .withIndex('by_userId', (q) => q.eq('userId', userId))
+      .collect();
+    for (const doc of profiles) await ctx.db.delete(doc._id);
+
+    // Delete AI suggestions
+    const suggestions = await ctx.db
+      .query('aiSuggestions')
+      .withIndex('by_userId', (q) => q.eq('userId', userId))
+      .collect();
+    for (const doc of suggestions) await ctx.db.delete(doc._id);
+
+    // Delete generation cost records
+    const costs = await ctx.db
+      .query('generationCosts')
+      .withIndex('by_userId', (q) => q.eq('userId', userId))
+      .collect();
+    for (const doc of costs) await ctx.db.delete(doc._id);
+
+    // Delete user record (looked up by email, not by identity.subject)
+    if (email) {
+      const user = await ctx.db
+        .query('users')
+        .withIndex('by_email', (q) => q.eq('email', email))
+        .unique();
+      if (user) await ctx.db.delete(user._id);
     }
-
-    return {
-      success: true,
-      message: `נמחקו ${deletedCount} רשומות עבור משתמש ${userId}`,
-      deletedCount,
-    };
   },
 });

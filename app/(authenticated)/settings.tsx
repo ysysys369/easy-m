@@ -1,20 +1,25 @@
 import { useAuthActions } from '@convex-dev/auth/react';
-import { useMutation } from 'convex/react';
+import { useMutation, useQuery } from 'convex/react';
 import { useRouter } from 'expo-router';
 import {
   Bug,
   Building2,
+  Check,
   ChevronLeft,
   CreditCard,
+  Image as ImageIcon,
+  LayoutTemplate,
   LogIn,
   LogOut,
+  RotateCcw,
   Settings2,
   Shield,
+  Sparkles,
   Trash2,
   UserPlus,
 } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Animated, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Modal, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
@@ -23,9 +28,11 @@ import {
   MOCK_PAYMENTS,
   PAYMENT_SYSTEM_ENABLED,
 } from '@/config/appConfig';
+import { useDevUiOverride } from '@/contexts/DevUiOverrideContext';
+import type { DevUiState } from '@/contexts/DevUiOverrideContext';
 import { useRevenueCat } from '@/contexts/RevenueCatContext';
 import { api } from '@/convex/_generated/api';
-import { tw } from '@/lib/rtl';
+import { rtl, tw } from '@/lib/rtl';
 import { LogoTopLeft } from '@/components/LogoTopLeft';
 
 // ─── צבעים ─────────────────────────────────────────────────────────────────
@@ -83,11 +90,67 @@ function DebugButton({
           borderColor: 'rgba(234,179,8,0.25)',
         }}
       >
-        <ChevronLeft size={16} color={C.textMid} />
-        <Text style={{ flex: 1, color: '#e4e4e7', fontSize: 13, textAlign: 'right' }}>{label}</Text>
         <Icon size={18} color={C.purple} />
+        <Text style={{ flex: 1, color: '#e4e4e7', fontSize: 13, textAlign: 'left' }}>{label}</Text>
+        <ChevronLeft size={16} color={C.textMid} />
       </TouchableOpacity>
     </Animated.View>
+  );
+}
+
+// ─── טוגל מצב UI (DEV בלבד) ─────────────────────────────────────────────────
+const UI_STATE_OPTIONS: { value: DevUiState; label: string }[] = [
+  { value: 'real',    label: 'אמיתי'   },
+  { value: 'visitor', label: 'מבקר'    },
+  { value: 'free',    label: 'חינמי'   },
+  { value: 'premium', label: 'פרימיום' },
+];
+
+function UiStateToggle({
+  current,
+  onChange,
+}: {
+  current: DevUiState;
+  onChange: (s: DevUiState) => void;
+}) {
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        borderRadius: 14,
+        overflow: 'hidden',
+        borderWidth: 1,
+        borderColor: 'rgba(234,179,8,0.28)',
+      }}
+    >
+      {UI_STATE_OPTIONS.map((opt, i) => {
+        const selected = current === opt.value;
+        return (
+          <TouchableOpacity
+            key={opt.value}
+            onPress={() => onChange(opt.value)}
+            style={{
+              flex: 1,
+              paddingVertical: 10,
+              alignItems: 'center',
+              backgroundColor: selected ? 'rgba(234,179,8,0.22)' : 'transparent',
+              borderStartWidth: i > 0 ? 1 : 0,
+              borderStartColor: 'rgba(234,179,8,0.20)',
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 12,
+                fontWeight: selected ? '700' : '400',
+                color: selected ? '#eab308' : '#71717a',
+              }}
+            >
+              {opt.label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
   );
 }
 
@@ -146,11 +209,187 @@ function ActionRow({
           elevation: 3,
         }}
       >
-        <ChevronLeft size={18} color={C.textMid} />
-        <Text style={{ flex: 1, color, fontSize: 15, fontWeight: '600', textAlign: 'right' }}>
+        <Icon size={20} color={iconColor} />
+        <Text style={{ flex: 1, color, fontSize: 15, fontWeight: '600', textAlign: 'left' }}>
           {label}
         </Text>
-        <Icon size={20} color={iconColor} />
+        <ChevronLeft size={18} color={C.textMid} />
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
+// ─── סוג תמונה לפוסט ───────────────────────────────────────────────────────
+type PostImageType = 'photo' | 'designed' | 'premium_ad';
+
+const POST_IMAGE_TYPE_OPTIONS: ReadonlyArray<{
+  value: PostImageType;
+  title: string;
+  subtitle: string;
+  icon: React.ComponentType<{ size: number; color: string }>;
+  recommended?: boolean;
+}> = [
+  {
+    value: 'premium_ad',
+    title: 'פוסטר פרסומת פרימיום',
+    subtitle: 'מודעה מעוצבת עם כותרת חזקה, טיפוגרפיה בולטת וצבעי מותג',
+    icon: Sparkles,
+    recommended: true,
+  },
+  {
+    value: 'designed',
+    title: 'פוסט מעוצב',
+    subtitle: 'תמונה מקצועית עם כותרת קצרה ועיצוב גרפי נקי',
+    icon: LayoutTemplate,
+  },
+  {
+    value: 'photo',
+    title: 'תמונה בלבד',
+    subtitle: 'תמונה פרסומית נקייה ללא טקסט מודפס על הפוסט',
+    icon: ImageIcon,
+  },
+];
+
+function ImageTypeOption({
+  value,
+  title,
+  subtitle,
+  icon: Icon,
+  recommended,
+  selected,
+  loading,
+  onPress,
+  delay,
+}: {
+  value: PostImageType;
+  title: string;
+  subtitle: string;
+  icon: React.ComponentType<{ size: number; color: string }>;
+  recommended?: boolean;
+  selected: boolean;
+  loading: boolean;
+  onPress: (next: PostImageType) => void;
+  delay: number;
+}) {
+  const anim  = useRef(new Animated.Value(0)).current;
+  const scale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.timing(anim, { toValue: 1, duration: 380, delay, useNativeDriver: true }).start();
+  }, []);
+
+  const opacity    = anim;
+  const translateY = anim.interpolate({ inputRange: [0, 1], outputRange: [10, 0] });
+
+  const onIn  = () => Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, speed: 60 }).start();
+  const onOut = () => Animated.spring(scale, { toValue: 1,    useNativeDriver: true, speed: 40 }).start();
+
+  return (
+    <Animated.View style={{ opacity, transform: [{ translateY }, { scale }] }}>
+      <TouchableOpacity
+        activeOpacity={1}
+        onPressIn={onIn}
+        onPressOut={onOut}
+        onPress={() => onPress(value)}
+        disabled={loading}
+        accessibilityRole="button"
+        accessibilityState={{ selected }}
+        accessibilityLabel={title}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 12,
+          padding: 16,
+          borderRadius: 18,
+          backgroundColor: selected ? C.purpleFaint : C.card,
+          borderWidth: 1.5,
+          borderColor: selected ? C.purple : C.border,
+          shadowColor: C.purple,
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: selected ? 0.30 : 0.08,
+          shadowRadius: 10,
+          elevation: selected ? 6 : 2,
+        }}
+      >
+        {/* Selection mark */}
+        <View
+          style={{
+            width: 24,
+            height: 24,
+            borderRadius: 12,
+            backgroundColor: selected ? C.purple : 'transparent',
+            borderWidth: 1.5,
+            borderColor: selected ? C.purple : C.border,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          {selected && <Check size={14} color="#fff" strokeWidth={3} />}
+        </View>
+
+        {/* Title + subtitle */}
+        <View style={{ flex: 1 }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'flex-start',
+              gap: 8,
+              marginBottom: 4,
+            }}
+          >
+            {recommended && (
+              <View
+                style={{
+                  paddingHorizontal: 8,
+                  paddingVertical: 2,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(124,58,237,0.18)',
+                  borderWidth: 1,
+                  borderColor: C.purpleBdr,
+                }}
+              >
+                <Text style={{ color: '#c4b5fd', fontSize: 10, fontWeight: '700' }}>מומלץ</Text>
+              </View>
+            )}
+            <Text
+              style={{
+                color: selected ? '#fff' : '#e4e4e7',
+                fontSize: 15,
+                fontWeight: '700',
+                textAlign: 'left',
+              }}
+            >
+              {title}
+            </Text>
+          </View>
+          <Text
+            style={{
+              color: C.textMid,
+              fontSize: 12,
+              lineHeight: 18,
+              textAlign: 'left',
+            }}
+          >
+            {subtitle}
+          </Text>
+        </View>
+
+        {/* Icon */}
+        <View
+          style={{
+            width: 38,
+            height: 38,
+            borderRadius: 12,
+            backgroundColor: selected ? C.purple : C.purpleFaint,
+            borderWidth: 1,
+            borderColor: selected ? C.purple : C.purpleBdr,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Icon size={18} color={selected ? '#fff' : C.purple} />
+        </View>
       </TouchableOpacity>
     </Animated.View>
   );
@@ -161,8 +400,35 @@ export default function SettingsScreen() {
   const router = useRouter();
   const { signOut } = useAuthActions();
   const { isPremium, isConfigured, isExpoGo } = useRevenueCat();
+  const { uiOverride, setUiOverride } = useDevUiOverride();
   const [isDebugOpen, setIsDebugOpen] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showDeleteConfirm2, setShowDeleteConfirm2] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isResettingQuota, setIsResettingQuota] = useState(false);
   const deleteMyAccount = useMutation(api.users.deleteMyAccount);
+  const resetMyPostQuotaForDev = useMutation(api.users.resetMyPostQuotaForDev);
+
+  const businessProfile = useQuery(api.businessProfiles.getMyBusinessProfile);
+  const updatePostImageType = useMutation(api.businessProfiles.updatePostImageType);
+  const [savingImageType, setSavingImageType] = useState<PostImageType | null>(null);
+
+  // Default to premium_ad when the user hasn't picked anything yet
+  const currentImageType: PostImageType =
+    (businessProfile?.postImageType as PostImageType | undefined) ?? 'premium_ad';
+
+  const handlePickImageType = async (next: PostImageType) => {
+    if (savingImageType || !businessProfile) return;
+    if (next === currentImageType) return;
+    setSavingImageType(next);
+    try {
+      await updatePostImageType({ postImageType: next });
+    } catch {
+      Alert.alert('שגיאה', 'לא הצלחנו לשמור את ההעדפה. נסה שנית.');
+    } finally {
+      setSavingImageType(null);
+    }
+  };
 
   const headerAnim = useRef(new Animated.Value(0)).current;
 
@@ -199,58 +465,23 @@ export default function SettingsScreen() {
     );
   };
 
-  const handleDeleteAccount = async () => {
-    Alert.alert(
-      '⚠️ מחיקת חשבון',
-      'האם אתה בטוח שברצונך למחוק את החשבון שלך?\n\nפעולה זו תמחק לצמיתות את:\n• פרטי החשבון שלך\n• כל הנתונים המשויכים אליך\n• היסטוריית השימוש שלך\n\n⚠️ לא ניתן לשחזר את הנתונים לאחר המחיקה!',
-      [
-        {
-          text: 'ביטול',
-          style: 'cancel',
-        },
-        {
-          text: 'המשך למחיקה',
-          style: 'destructive',
-          onPress: () => {
-            Alert.alert(
-              '🚨 אישור סופי',
-              'זוהי ההזדמנות האחרונה שלך לבטל!\n\nהחשבון שלך וכל הנתונים ימחקו לצמיתות ולא יהיה ניתן לשחזר אותם.\n\nהאם אתה בטוח לחלוטין?',
-              [
-                {
-                  text: 'ביטול - אל תמחק',
-                  style: 'cancel',
-                },
-                {
-                  text: 'כן, מחק את החשבון',
-                  style: 'destructive',
-                  onPress: async () => {
-                    try {
-                      await deleteMyAccount();
-                      await signOut();
-                      Alert.alert(
-                        'החשבון נמחק',
-                        'החשבון שלך נמחק בהצלחה. תודה שהשתמשת באפליקציה שלנו.'
-                      );
-                    } catch (_error) {
-                      Alert.alert(
-                        'שגיאה',
-                        'אירעה שגיאה במחיקת החשבון. אנא נסה שוב או צור קשר עם התמיכה.'
-                      );
-                    }
-                  },
-                },
-              ],
-              { cancelable: true }
-            );
-          },
-        },
-      ],
-      { cancelable: true }
-    );
+  const handleDeleteAccount = () => setShowDeleteModal(true);
+
+  const confirmDeleteAccount = async () => {
+    setIsDeleting(true);
+    try {
+      await deleteMyAccount();
+      await signOut();
+      // _layout.tsx redirects to sign-in automatically when isAuthenticated becomes false
+    } catch {
+      setIsDeleting(false);
+      setShowDeleteModal(false);
+      Alert.alert('שגיאה', 'מחיקת החשבון נכשלה. אנא נסה שוב או פנה לתמיכה.');
+    }
   };
 
   const openPaywallPreview = () => {
-    router.push('/(auth)/paywall?preview=true');
+    router.push('/(authenticated)/paywall');
   };
 
   const openSignInPreview = () => {
@@ -259,6 +490,19 @@ export default function SettingsScreen() {
 
   const openSignUpPreview = () => {
     router.push('/(auth)/sign-up?preview=true');
+  };
+
+  const handleResetPostQuotaForDev = async () => {
+    if (!IS_DEV_MODE || isResettingQuota) return;
+    setIsResettingQuota(true);
+    try {
+      await resetMyPostQuotaForDev();
+      Alert.alert('בוצע', 'מכסת הפוסטים אופסה לבדיקה.');
+    } catch {
+      Alert.alert('שגיאה', 'לא הצלחנו לאפס את מכסת הפוסטים לבדיקה.');
+    } finally {
+      setIsResettingQuota(false);
+    }
   };
 
   // ============================================================================
@@ -270,7 +514,7 @@ export default function SettingsScreen() {
       <LogoTopLeft />
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingBottom: 150 }}
         showsVerticalScrollIndicator={false}
       >
         <View style={{ paddingHorizontal: 20, paddingTop: 80 }}>
@@ -282,7 +526,7 @@ export default function SettingsScreen() {
               transform: [{ translateY: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }],
               flexDirection: 'row',
               alignItems: 'center',
-              justifyContent: 'flex-end',
+              justifyContent: 'flex-start',
               gap: 10,
               marginBottom: 6,
             }}
@@ -311,7 +555,7 @@ export default function SettingsScreen() {
               opacity: headerAnim,
               color: C.textSub,
               fontSize: 14,
-              textAlign: 'right',
+              textAlign: 'left',
               marginBottom: 28,
             }}
           >
@@ -337,6 +581,14 @@ export default function SettingsScreen() {
             }}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              {/* כותרת + אייקון */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Shield size={18} color={isPremium ? C.purple : C.textMid} />
+                <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700', textAlign: 'left' }}>
+                  סטטוס מנוי
+                </Text>
+              </View>
+
               {/* Badge סטטוס */}
               <View
                 style={{
@@ -352,16 +604,61 @@ export default function SettingsScreen() {
                   {isPremium ? 'פרימיום' : 'חינמי'}
                 </Text>
               </View>
-
-              {/* כותרת + אייקון */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>
-                  סטטוס מנוי
-                </Text>
-                <Shield size={18} color={isPremium ? C.purple : C.textMid} />
-              </View>
             </View>
           </Animated.View>
+
+          {/* ─── סוג תמונה לפוסט ─── */}
+          {businessProfile && (
+            <>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: 10,
+                }}
+              >
+                <Text
+                  style={{
+                    color: C.textSub,
+                    fontSize: 11,
+                    textAlign: 'left',
+                          flex: 1,
+                    marginStart: 12,
+                  }}
+                >
+                  משפיע על כל הפוסטים שתיצרו מעכשיו
+                </Text>
+                <Text
+                  style={{
+                    color: C.textSub,
+                    fontSize: 12,
+                    fontWeight: '600',
+                    letterSpacing: 0.8,
+                    textAlign: 'left',
+                        }}
+                >
+                  סוג תמונה לפוסט
+                </Text>
+              </View>
+              <View style={{ gap: 10, marginBottom: 28 }}>
+                {POST_IMAGE_TYPE_OPTIONS.map((opt, i) => (
+                  <ImageTypeOption
+                    key={opt.value}
+                    value={opt.value}
+                    title={opt.title}
+                    subtitle={opt.subtitle}
+                    icon={opt.icon}
+                    recommended={opt.recommended}
+                    selected={currentImageType === opt.value}
+                    loading={savingImageType !== null}
+                    onPress={handlePickImageType}
+                    delay={i * 60}
+                  />
+                ))}
+              </View>
+            </>
+          )}
 
           {/* ─── פעולות ─── */}
           <Text
@@ -370,16 +667,17 @@ export default function SettingsScreen() {
               fontSize: 12,
               fontWeight: '600',
               letterSpacing: 0.8,
-              textAlign: 'right',
+              textAlign: 'left',
               marginBottom: 12,
             }}
           >
             פעולות חשבון
           </Text>
           <View style={{ gap: 10, marginBottom: 28 }}>
-            <ActionRow icon={Building2} label="פרטי העסק"   onPress={() => router.push('/(authenticated)/business-details')} delay={20} />
-            <ActionRow icon={LogOut}    label="התנתקות"       onPress={handleSignOut}      delay={100} />
-            <ActionRow icon={Trash2}    label="מחיקת חשבון"   onPress={handleDeleteAccount} delay={180} destructive />
+            <ActionRow icon={Building2}  label="פרטי העסק"  onPress={() => router.push('/(authenticated)/business-details')} delay={20} />
+            <ActionRow icon={CreditCard} label="ניהול מנוי"  onPress={() => router.push('/(authenticated)/paywall')}          delay={60} />
+            <ActionRow icon={LogOut}     label="התנתקות"     onPress={handleSignOut}      delay={100} />
+            <ActionRow icon={Trash2}     label="מחיקת חשבון" onPress={handleDeleteAccount} delay={180} destructive />
           </View>
 
           {/* ─── פאנל דיבאג ─── */}
@@ -402,15 +700,15 @@ export default function SettingsScreen() {
                   borderBottomWidth: isDebugOpen ? 0 : 1,
                 }}
               >
+                <Bug size={18} color="#eab308" />
+                <Text style={{ flex: 1, color: '#eab308', fontSize: 14, fontWeight: '600', textAlign: 'left' }}>
+                  קונסולת דיבאג (מצב פיתוח)
+                </Text>
                 <ChevronLeft
                   size={18}
                   color="#eab308"
                   style={{ transform: [{ rotate: isDebugOpen ? '-90deg' : '0deg' }] }}
                 />
-                <Text style={{ flex: 1, color: '#eab308', fontSize: 14, fontWeight: '600', textAlign: 'right' }}>
-                  קונסולת דיבאג (מצב פיתוח)
-                </Text>
-                <Bug size={18} color="#eab308" />
               </TouchableOpacity>
 
               {/* תוכן פאנל */}
@@ -427,7 +725,7 @@ export default function SettingsScreen() {
                   }}
                 >
                   {/* מצב אפליקציה */}
-                  <Text style={{ color: C.textMid, fontSize: 12, fontWeight: '600', textAlign: 'right', marginBottom: 8 }}>
+                  <Text style={{ color: C.textMid, fontSize: 12, fontWeight: '600', textAlign: 'left', marginBottom: 8 }}>
                     מצב אפליקציה
                   </Text>
                   <View style={{ gap: 2, marginBottom: 16 }}>
@@ -440,16 +738,51 @@ export default function SettingsScreen() {
                   </View>
 
                   {/* בדיקות UI */}
-                  <Text style={{ color: C.textMid, fontSize: 12, fontWeight: '600', textAlign: 'right', marginBottom: 10 }}>
+                  <Text style={{ color: C.textMid, fontSize: 12, fontWeight: '600', textAlign: 'left', marginBottom: 10 }}>
                     בדיקות UI
                   </Text>
-                  <View style={{ gap: 8 }}>
+                  <View style={{ gap: 8, marginBottom: 20 }}>
                     <DebugButton icon={CreditCard} label="פתח מסך תשלום (Preview)"      onPress={openPaywallPreview} />
                     <DebugButton icon={LogIn}      label="פתח מסך התחברות (Preview)"    onPress={openSignInPreview} />
                     <DebugButton icon={UserPlus}   label="פתח מסך הרשמה (Preview)"      onPress={openSignUpPreview} />
+                    <DebugButton
+                      icon={RotateCcw}
+                      label={isResettingQuota ? 'מאפס מכסת פוסטים...' : 'אפס מכסת פוסטים לבדיקה'}
+                      onPress={handleResetPostQuotaForDev}
+                    />
                   </View>
+
+                  {/* מצב UI לבדיקות מסך הבית */}
+                  <Text style={{ color: C.textMid, fontSize: 12, fontWeight: '600', textAlign: 'left', marginBottom: 10 }}>
+                    מצב מסך הבית
+                  </Text>
+                  <UiStateToggle current={uiOverride} onChange={setUiOverride} />
                 </View>
               )}
+            </View>
+          )}
+
+          {/* ─── באנר אוברריד פעיל ─── */}
+          {IS_DEV_MODE && uiOverride !== 'real' && (
+            <View
+              style={{
+                padding: 10,
+                borderRadius: 12,
+                backgroundColor: 'rgba(234,179,8,0.12)',
+                borderWidth: 1,
+                borderColor: 'rgba(234,179,8,0.40)',
+                marginBottom: 8,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
+              <TouchableOpacity onPress={() => setUiOverride('real')}>
+                <Text style={{ color: '#eab308', fontSize: 12, fontWeight: '700' }}>איפוס</Text>
+              </TouchableOpacity>
+              <Text style={{ color: '#eab308', fontSize: 12, fontWeight: '600' }}>
+                מסך הבית: {UI_STATE_OPTIONS.find(o => o.value === uiOverride)?.label}
+              </Text>
             </View>
           )}
 
@@ -473,6 +806,206 @@ export default function SettingsScreen() {
 
         </View>
       </ScrollView>
+      {/* ─── מודל אישור מחיקת חשבון ─── */}
+      <Modal
+        visible={showDeleteModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { if (!isDeleting) setShowDeleteModal(false); }}
+      >
+        <Pressable
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.72)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            paddingHorizontal: 24,
+          }}
+          onPress={() => { if (!isDeleting) setShowDeleteModal(false); }}
+        >
+          <Pressable
+            style={{
+              width: '100%',
+              backgroundColor: '#111114',
+              borderRadius: 24,
+              borderWidth: 1,
+              borderColor: 'rgba(239,68,68,0.30)',
+              padding: 28,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 12 },
+              shadowOpacity: 0.5,
+              shadowRadius: 24,
+              elevation: 20,
+            }}
+          >
+            {/* כותרת */}
+            <Text
+              style={{
+                color: '#fff',
+                fontSize: 20,
+                fontWeight: '800',
+                textAlign: 'right',
+                marginBottom: 14,
+              }}
+            >
+              מחיקת חשבון
+            </Text>
+
+            {/* טקסט */}
+            <Text
+              style={{
+                color: '#a1a1aa',
+                fontSize: 15,
+                lineHeight: 24,
+                textAlign: 'right',
+                marginBottom: 28,
+              }}
+            >
+              הפעולה תמחק את החשבון והנתונים שלך מהאפליקציה. לא ניתן לבטל את הפעולה.
+            </Text>
+
+            {/* כפתורים */}
+            <View style={{ gap: 10 }}>
+              {/* אישור — פותח אישור שני */}
+              <Pressable
+                onPress={() => {
+                  setShowDeleteModal(false);
+                  setShowDeleteConfirm2(true);
+                }}
+                style={{
+                  backgroundColor: '#ef4444',
+                  borderRadius: 14,
+                  paddingVertical: 15,
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>
+                  מחק חשבון
+                </Text>
+              </Pressable>
+
+              {/* ביטול */}
+              <Pressable
+                onPress={() => setShowDeleteModal(false)}
+                style={{
+                  borderRadius: 14,
+                  paddingVertical: 15,
+                  alignItems: 'center',
+                  backgroundColor: 'rgba(255,255,255,0.06)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.10)',
+                }}
+              >
+                <Text style={{ color: '#a1a1aa', fontSize: 15, fontWeight: '600' }}>
+                  ביטול
+                </Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ─── אישור שני (בלתי הפיך) ─── */}
+      <Modal
+        visible={showDeleteConfirm2}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { if (!isDeleting) setShowDeleteConfirm2(false); }}
+      >
+        <Pressable
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.80)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            paddingHorizontal: 24,
+          }}
+          onPress={() => { if (!isDeleting) setShowDeleteConfirm2(false); }}
+        >
+          <Pressable
+            style={{
+              width: '100%',
+              backgroundColor: '#111114',
+              borderRadius: 24,
+              borderWidth: 1,
+              borderColor: 'rgba(239,68,68,0.45)',
+              padding: 28,
+              shadowColor: '#ef4444',
+              shadowOffset: { width: 0, height: 8 },
+              shadowOpacity: 0.20,
+              shadowRadius: 24,
+              elevation: 20,
+            }}
+          >
+            {/* כותרת */}
+            <Text
+              style={{
+                color: '#fff',
+                fontSize: 20,
+                fontWeight: '800',
+                textAlign: 'right',
+                marginBottom: 14,
+              }}
+            >
+              אתה בטוח?
+            </Text>
+
+            {/* טקסט */}
+            <Text
+              style={{
+                color: '#a1a1aa',
+                fontSize: 15,
+                lineHeight: 24,
+                textAlign: 'right',
+                marginBottom: 28,
+              }}
+            >
+              כל הפוסטים, פרטי העסק והנתונים שלך יימחקו לצמיתות.
+            </Text>
+
+            {/* כפתורים */}
+            <View style={{ gap: 10 }}>
+              {/* מחיקה סופית */}
+              <Pressable
+                onPress={confirmDeleteAccount}
+                disabled={isDeleting}
+                style={{
+                  backgroundColor: isDeleting ? 'rgba(239,68,68,0.40)' : '#ef4444',
+                  borderRadius: 14,
+                  paddingVertical: 15,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexDirection: 'row',
+                  gap: 8,
+                }}
+              >
+                {isDeleting && <ActivityIndicator size="small" color="#fff" />}
+                <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>
+                  {isDeleting ? 'מוחק...' : 'כן, מחק לצמיתות'}
+                </Text>
+              </Pressable>
+
+              {/* ביטול */}
+              <Pressable
+                onPress={() => setShowDeleteConfirm2(false)}
+                disabled={isDeleting}
+                style={{
+                  borderRadius: 14,
+                  paddingVertical: 15,
+                  alignItems: 'center',
+                  backgroundColor: 'rgba(255,255,255,0.06)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.10)',
+                }}
+              >
+                <Text style={{ color: '#a1a1aa', fontSize: 15, fontWeight: '600' }}>
+                  ביטול
+                </Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }

@@ -126,49 +126,69 @@ export function RevenueCatProvider({
 
   useEffect(() => {
     async function initialize() {
-      // אם מערכת התשלומים כבויה - המשתמש הוא פרימיום אוטומטית
-      if (!PAYMENT_SYSTEM_ENABLED) {
-        setIsPremium(true);
-        // סנכרון userType - במצב זה המשתמש נשאר 'free' כי אין תשלומים
-        setIsLoading(false);
-        setIsInitialized(true);
-        return;
-      }
-
-      // ב-Expo Go אין גישה למודולים מקוריים
+      // ב-Expo Go אין גישה למודולים מקוריים — לא ניתן לקרוא ל-configure
       if (isExpoGo) {
+        console.info('[RevenueCat] Skipping configure — running in Expo Go.');
         setPackages(PREVIEW_PACKAGES);
+        // כשמערכת התשלומים כבויה, כולם נחשבים פרימיום (אין gating)
+        if (!PAYMENT_SYSTEM_ENABLED) setIsPremium(true);
         setIsLoading(false);
         setIsInitialized(true);
         return;
       }
 
-      // אם אין מפתחות מוגדרים - עובדים במצב תצוגה מקדימה
+      // אם אין מפתח API — עובדים במצב תצוגה מקדימה
       if (!isConfigured) {
+        console.warn(
+          '[RevenueCat] No API key found. Set EXPO_PUBLIC_REVENUECAT_TEST_STORE_API_KEY ' +
+            '(or platform-specific key) in .env.local.'
+        );
         setPackages(PREVIEW_PACKAGES);
+        if (!PAYMENT_SYSTEM_ENABLED) setIsPremium(true);
         setIsLoading(false);
         setIsInitialized(true);
         return;
       }
 
-      // ניסיון לאתחל את RevenueCat SDK
+      // ─── תמיד לאתחל את ה-SDK כשיש מפתח, גם אם PAYMENT_SYSTEM_ENABLED=false ───
+      // הסיבה: ה-Paywall הילידי של RevenueCatUI דורש Purchases.configure()
+      // נקרא ולפני שהוא מורנדר, אחרת מקבלים "Purchases has not been configured."
+      // הדגל PAYMENT_SYSTEM_ENABLED שולט רק על gating של פיצ'רים, לא על אתחול ה-SDK.
       try {
         const apiKey = getCurrentPlatformRevenueCatApiKey();
         if (!apiKey) {
-          throw new Error('אין מפתח API לפלטפורמה הנוכחית');
+          throw new Error('No RevenueCat API key for current platform');
         }
+        console.info('[RevenueCat] Configuring purchases SDK.');
 
         // ייבוא דינמי למניעת קריסות ב-Expo Go
-        const Purchases = (await import('react-native-purchases')).default;
+        const PurchasesModule = await import('react-native-purchases');
+        const Purchases = PurchasesModule.default;
+        if (!Purchases || typeof Purchases.configure !== 'function') {
+          throw new Error(
+            'react-native-purchases default export is unavailable. ' +
+              'The native module is probably not linked into this binary — ' +
+              'run `npx expo prebuild --clean && npx expo run:ios --device`.'
+          );
+        }
 
-        Purchases.setLogLevel(Purchases.LOG_LEVEL.VERBOSE);
+        // setLogLevel intentionally NOT called — it is optional, sometimes
+        // throws "Cannot read property 'setLogLevel' of undefined" on certain
+        // SDK / bundler combos, and is not required for configure().
         await Purchases.configure({ apiKey });
+        console.info('[RevenueCat] configure() succeeded.');
 
-        // טעינת ההצעות
+        // טעינת ה-Offering הדיפולטי
         const offerings = await Purchases.getOfferings();
-        if (offerings.current?.availablePackages) {
+        const defaultOffering = offerings.current;
+        console.info('[RevenueCat] Offerings loaded', {
+          hasDefault: Boolean(defaultOffering),
+          availablePackages: defaultOffering?.availablePackages.length ?? 0,
+        });
+
+        if (defaultOffering?.availablePackages.length) {
           const loadedPackages: PackageInfo[] =
-            offerings.current.availablePackages.map((pkg) => ({
+            defaultOffering.availablePackages.map((pkg) => ({
               identifier: pkg.identifier,
               priceString: pkg.product.priceString,
               price: pkg.product.price,
@@ -180,17 +200,23 @@ export function RevenueCatProvider({
           setPackages(loadedPackages);
         }
 
-        // בדיקת סטטוס פרימיום
+        // בדיקת סטטוס פרימיום מול ה-entitlements של ה-customer
         const customerInfo = await Purchases.getCustomerInfo();
         const hasPremium =
           customerInfo.entitlements.active.Pro !== undefined ||
-          customerInfo.entitlements.active.premium !== undefined;
-        setIsPremium(hasPremium);
+          customerInfo.entitlements.active.premium !== undefined ||
+          customerInfo.entitlements.active['Easy-M Pro'] !== undefined;
+        // כשמערכת התשלומים כבויה (PAYMENT_SYSTEM_ENABLED=false) — כולם פרימיום
+        // (אין gating בפועל). זה משמר את ההתנהגות הקודמת של האפליקציה.
+        setIsPremium(PAYMENT_SYSTEM_ENABLED ? hasPremium : true);
 
         setIsInitialized(true);
-      } catch (_error) {
-        // במקרה של שגיאה - עובדים במצב תצוגה מקדימה
+      } catch (error) {
+        console.error('[RevenueCat] Initialization failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
         setPackages(PREVIEW_PACKAGES);
+        if (!PAYMENT_SYSTEM_ENABLED) setIsPremium(true);
         setIsInitialized(true);
       } finally {
         setIsLoading(false);
@@ -247,7 +273,8 @@ export function RevenueCatProvider({
           await Purchases.purchasePackage(packageToPurchase);
         const hasPremium =
           customerInfo.entitlements.active.Pro !== undefined ||
-          customerInfo.entitlements.active.premium !== undefined;
+          customerInfo.entitlements.active.premium !== undefined ||
+          customerInfo.entitlements.active['Easy-M Pro'] !== undefined;
         setIsPremium(hasPremium);
 
         return hasPremium;
@@ -299,7 +326,8 @@ export function RevenueCatProvider({
       const customerInfo = await Purchases.restorePurchases();
       const hasPremium =
         customerInfo.entitlements.active.Pro !== undefined ||
-        customerInfo.entitlements.active.premium !== undefined;
+        customerInfo.entitlements.active.premium !== undefined ||
+        customerInfo.entitlements.active['Easy-M Pro'] !== undefined;
       setIsPremium(hasPremium);
 
       if (hasPremium) {
@@ -329,7 +357,8 @@ export function RevenueCatProvider({
       const customerInfo = await Purchases.getCustomerInfo();
       const hasPremium =
         customerInfo.entitlements.active.Pro !== undefined ||
-        customerInfo.entitlements.active.premium !== undefined;
+        customerInfo.entitlements.active.premium !== undefined ||
+        customerInfo.entitlements.active['Easy-M Pro'] !== undefined;
       setIsPremium(hasPremium);
     } catch (_error) {
       // שגיאה בשקט - לא צריך להציג למשתמש
