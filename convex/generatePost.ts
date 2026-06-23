@@ -36,7 +36,15 @@ type CreativeVisualStyle =
   | 'aggressive'
   | 'clean';
 type PosterLanguageMode = 'english' | 'hebrew';
-type TextElementRole = 'headline' | 'subheadline' | 'offer' | 'cta' | 'brand_name';
+type TextElementRole =
+  | 'headline'
+  | 'subheadline'
+  | 'body'
+  | 'offer'
+  | 'badge'
+  | 'cta'
+  | 'footer'
+  | 'brand_name';
 type TextElementImportance = 'primary' | 'secondary' | 'small';
 type TextElement = {
   role: TextElementRole;
@@ -136,6 +144,12 @@ type BusinessProfile = {
   postImageType?: PostImageType;
 } | null;
 
+type RemoteImageReference = {
+  file: Uploadable;
+  bytes: number;
+  contentType: string;
+};
+
 const ENABLE_DEV_GENERATION_LOGS =
   process.env.EASY_M_DEV_GENERATION_LOGS === 'true' &&
   process.env.EASY_M_RUNTIME_ENV === 'development' &&
@@ -178,7 +192,8 @@ type CompositionStrategy = 'complete_image' | 'background_with_overlay';
 
 const HEBREW_RE = /[֐-׿יִ-ﭏ]+/g;
 const BEST_OPENAI_IMAGE_MODEL = 'gpt-image-2';
-
+const OPENAI_POSTER_IMAGE_SIZE = '1024x1024';
+const OPENAI_PHOTO_IMAGE_SIZE = '1024x1024';
 function dedupe(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
@@ -197,71 +212,6 @@ function englishOnlyOrEmpty(value: string | undefined): string {
   return raw;
 }
 
-function buildBusinessContext(p: BusinessProfile): string {
-  if (!p) return '';
-  const lines: string[] = [];
-  const website = p.websiteUrl ?? p.website;
-  if (p.businessName)    lines.push(`שם העסק: ${p.businessName}`);
-  if (p.businessType)    lines.push(`סוג העסק: ${p.businessType}`);
-  if (p.description)     lines.push(`תיאור: ${p.description}`);
-  if (p.audience ?? p.targetAudience) {
-    lines.push(`קהל יעד: ${p.audience ?? p.targetAudience}`);
-  }
-  if (p.style ?? p.tone) lines.push(`סגנון/טון מועדף: ${p.style ?? p.tone}`);
-  if (p.brandColors)     lines.push(`צבעי מותג: ${p.brandColors}`);
-  if (p.city)            lines.push(`אזור: ${p.city}`);
-  if (p.services)        lines.push(`שירותים/מוצרים: ${p.services}`);
-  if (p.products)        lines.push(`מוצרים: ${p.products}`);
-  if (p.uniqueness)      lines.push(`מה מיוחד: ${p.uniqueness}`);
-  if (p.goal ?? p.postGoal) lines.push(`מטרת הפוסט: ${p.goal ?? p.postGoal}`);
-  if (website)           lines.push(`אתר: ${website}`);
-  if (p.phone)           lines.push(`טלפון: ${p.phone}`);
-  if (p.websiteSummary)  lines.push(`סיכום האתר: ${p.websiteSummary}`);
-  if (p.websiteServices?.length) {
-    lines.push(`שירותים/מוצרים שזוהו באתר: ${p.websiteServices.join(', ')}`);
-  }
-  if (p.websiteKeywords?.length) {
-    lines.push(`מילות מפתח מהאתר: ${p.websiteKeywords.join(', ')}`);
-  }
-  if (p.websiteTone)     lines.push(`טון שזוהה באתר: ${p.websiteTone}`);
-  if (p.socialInstagram) lines.push(`אינסטגרם: ${p.socialInstagram}`);
-  if (p.socialFacebook)  lines.push(`פייסבוק: ${p.socialFacebook}`);
-  if (p.logoUrl)         lines.push('יש לוגו עסקי שהאפליקציה תוסיף לפוסטר');
-  if ((p.images?.length ?? 0) + (p.uploadedImages?.length ?? 0) > 0) {
-    lines.push(`תמונות עסק שהועלו: ${(p.images?.length ?? 0) + (p.uploadedImages?.length ?? 0)}`);
-  }
-  return lines.join('\n');
-}
-
-function buildEnglishVisualContext(p: BusinessProfile): string {
-  if (!p) return '';
-  const parts: string[] = [];
-  const websiteServices = dedupe([...(p.websiteServices ?? []), p.services ?? '']);
-  if (p.businessName) parts.push(`Business name: "${p.businessName}" — this is a personalized ad for THIS specific business`);
-  if (p.businessType) parts.push(`Business type: ${p.businessType}`);
-  if (websiteServices.length) {
-    parts.push(`Services/products offered (MUST be visible in the scene): ${websiteServices.join(', ')}`);
-  }
-  if (p.products)   parts.push(`Products: ${p.products}`);
-  if (p.uniqueness)   parts.push(`What makes this business unique (highlight visually): ${p.uniqueness}`);
-  if (p.audience ?? p.targetAudience) {
-    parts.push(`Target audience (the people in the scene should look like them): ${p.audience ?? p.targetAudience}`);
-  }
-  if (p.style ?? p.tone) {
-    parts.push(`Brand tone (drives the entire mood): ${p.style ?? p.tone}`);
-  }
-  if (p.brandColors) parts.push(`Brand colors: ${p.brandColors}`);
-  if (p.websiteTone)  parts.push(`Website tone/style cues: ${p.websiteTone}`);
-  if (p.city)         parts.push(`Location: ${p.city}, Israel — incorporate authentic local environment`);
-  if (p.description)  parts.push(`Business description: ${p.description}`);
-  if (p.websiteSummary) {
-    parts.push(`Website scan summary: ${p.websiteSummary}`);
-  }
-  if (p.websiteKeywords?.length) {
-    parts.push(`Important website keywords: ${p.websiteKeywords.join(', ')}`);
-  }
-  return parts.join('\n• ');
-}
 
 // ─── Visual style per business type ─────────────────────────────────────────
 // Maps Hebrew business-type labels to industry-specific photography direction.
@@ -390,25 +340,6 @@ const BUSINESS_STYLE_MAP: { match: string[]; style: BusinessStyle }[] = [
     },
   },
 ];
-
-// ─── Short, image-prompt-friendly business identity summary ───────────────
-// Used in the final image prompt to keep the image model anchored to THIS business
-function buildBusinessIdentitySummary(p: BusinessProfile): string {
-  if (!p) return '';
-  const bits: string[] = [];
-  if (p.businessType) bits.push(p.businessType);
-  const offering = dedupe([p.services ?? '', ...(p.websiteServices ?? [])]).join(', ');
-  if (offering)       bits.push(`offering: ${offering}`);
-  if (p.audience)     bits.push(`for ${p.audience}`);
-  if (p.style || p.websiteTone) {
-    bits.push(`${p.style ?? p.websiteTone} tone`);
-  }
-  if (p.city)         bits.push(`in ${p.city}`);
-  const summary = bits.join(', ');
-  return p.businessName
-    ? `This is a tailored marketing visual for "${p.businessName}" — a ${summary}.`
-    : `This is a tailored marketing visual for a ${summary}.`;
-}
 
 function getStyleByBusinessType(businessType?: string): BusinessStyle | null {
   if (!businessType) return null;
@@ -1048,6 +979,7 @@ type PosterText = {
   body?: string;
   cta?: string;
   offer?: string;
+  badge?: string;
   footer?: string;
 };
 
@@ -1078,269 +1010,6 @@ function buildBusinessTextCorpus(p: BusinessProfile): string {
     .toLowerCase();
 }
 
-function businessMatchesAny(p: BusinessProfile, terms: string[]): boolean {
-  const corpus = buildBusinessTextCorpus(p);
-  return terms.some((term) => corpus.includes(term.toLowerCase()));
-}
-
-function isSushiBusiness(p: BusinessProfile): boolean {
-  return businessMatchesAny(p, ['סושי', 'sushi', 'סשימי', 'ניגירי', 'מאקי']);
-}
-
-function isRestaurantBusiness(
-  p: BusinessProfile,
-  industryCategory?: string | null,
-): boolean {
-  return (
-    industryCategory === 'food photography' ||
-    businessMatchesAny(p, [
-      'מסעדה',
-      'בית קפה',
-      'אוכל',
-      'קפה',
-      'מאפיה',
-      'restaurant',
-      'cafe',
-      'food',
-    ])
-  );
-}
-
-function isFitnessBusiness(p: BusinessProfile): boolean {
-  return businessMatchesAny(p, ['כושר', 'ספורט', 'אימון', 'fitness', 'gym']);
-}
-
-function isBeautyBusiness(p: BusinessProfile): boolean {
-  return businessMatchesAny(p, [
-    'קוסמטיקה',
-    'יופי',
-    'איפור',
-    'טיפוח',
-    'ביוטי',
-    'beauty',
-    'cosmetics',
-    'spa',
-    'nails',
-    'salon',
-  ]);
-}
-
-function isFashionBusiness(p: BusinessProfile): boolean {
-  return businessMatchesAny(p, [
-    'אופנה',
-    'בגדים',
-    'בוטיק',
-    'fashion',
-    'clothing',
-    'boutique',
-    'apparel',
-  ]);
-}
-
-function isPizzaBusiness(p: BusinessProfile): boolean {
-  return businessMatchesAny(p, ['פיצה', 'פיצריה', 'pizza', 'pizzeria']);
-}
-
-function isCafeOrBakeryBusiness(p: BusinessProfile): boolean {
-  return businessMatchesAny(p, [
-    'בית קפה',
-    'קפה',
-    'מאפיה',
-    'מאפייה',
-    'קונדיטוריה',
-    'cafe',
-    'café',
-    'coffee',
-    'bakery',
-    'patisserie',
-  ]);
-}
-
-function isNailsBusiness(p: BusinessProfile): boolean {
-  return businessMatchesAny(p, ['ציפורניים', 'מניקור', 'פדיקור', 'nails', 'manicure', 'pedicure']);
-}
-
-function isHairOrBarberBusiness(p: BusinessProfile): boolean {
-  return businessMatchesAny(p, [
-    'מספרה',
-    'מספרת',
-    'תספורת',
-    'ברבר',
-    'שיער',
-    'hair',
-    'barber',
-    'barbershop',
-    'salon',
-  ]);
-}
-
-function isRealEstateBusiness(p: BusinessProfile): boolean {
-  return businessMatchesAny(p, [
-    'נדל',          // matches נדל"ן with any quote style
-    'דירה',
-    'דירות',
-    'בית למכירה',
-    'נכס',
-    'real estate',
-    'realtor',
-    'property',
-    'apartment',
-  ]);
-}
-
-function isLegalOrCorporateBusiness(p: BusinessProfile): boolean {
-  return businessMatchesAny(p, [
-    'עורך דין',
-    'עורכת דין',
-    'משרד עורכי דין',
-    'משפט',
-    'רואה חשבון',
-    'רו"ח',
-    'יועץ מס',
-    'יועץ עסקי',
-    'יועץ פיננסי',
-    'לוביסט',
-    'lawyer',
-    'attorney',
-    'law firm',
-    'accountant',
-    'consultant',
-    'consulting',
-    'advisor',
-  ]);
-}
-
-function isJudaicaBusiness(p: BusinessProfile): boolean {
-  return businessMatchesAny(p, [
-    'יודאיקה',
-    'מזוז',
-    'חנוכ',
-    'שופר',
-    'תשמישי קדושה',
-    'judaica',
-  ]);
-}
-
-function isRetailProductBusiness(
-  p: BusinessProfile,
-  industryCategory?: string | null,
-): boolean {
-  return (
-    industryCategory === 'retail / product' ||
-    businessMatchesAny(p, [
-      'חנות',
-      'קמעונאות',
-      'מותג',
-      'shop',
-      'store',
-      'retail',
-      'brand',
-    ])
-  );
-}
-
-// Selection order is intentional — narrower / more visually distinctive
-// templates win over broader categories so a "sushi café" routes to sushi,
-// not to general restaurant or café.
-function selectPosterTemplate(
-  p: BusinessProfile,
-  industryCategory?: string | null,
-): PosterTemplate {
-  if (isSushiBusiness(p))                          return 'sushi_delivery';
-  if (isPizzaBusiness(p))                          return 'pizza_promo';
-  if (isCafeOrBakeryBusiness(p))                   return 'cafe_bakery';
-  if (isRestaurantBusiness(p, industryCategory))   return 'restaurant_promo';
-  if (isFitnessBusiness(p))                        return 'gym_campaign';
-  if (isJudaicaBusiness(p))                        return 'judaica_luxury';
-  if (isNailsBusiness(p))                          return 'nails_manicure';
-  if (isHairOrBarberBusiness(p))                   return 'hair_barber';
-  if (isBeautyBusiness(p))                         return 'beauty_luxury';
-  if (isFashionBusiness(p))                        return 'fashion_boutique';
-  if (isRealEstateBusiness(p))                     return 'real_estate';
-  if (isLegalOrCorporateBusiness(p))               return 'legal_corporate';
-  if (isRetailProductBusiness(p, industryCategory)) return 'retail_product';
-  return 'general_business_ad';
-}
-
-function selectCreativeTemplate(
-  p: BusinessProfile,
-  postGoal: PostGoal,
-  posterTemplate: PosterTemplate,
-): CreativeTemplate {
-  if (
-    posterTemplate === 'sushi_delivery' ||
-    posterTemplate === 'pizza_promo' ||
-    posterTemplate === 'cafe_bakery' ||
-    posterTemplate === 'restaurant_promo'
-  ) {
-    return 'food_promo';
-  }
-
-  if (
-    posterTemplate === 'beauty_luxury' ||
-    posterTemplate === 'nails_manicure' ||
-    posterTemplate === 'hair_barber' ||
-    posterTemplate === 'fashion_boutique'
-  ) {
-    return 'elegant_beauty';
-  }
-
-  if (posterTemplate === 'real_estate' || posterTemplate === 'legal_corporate') {
-    return 'minimal_luxury';
-  }
-
-  if (
-    postGoal === 'sale' ||
-    postGoal === 'booking' ||
-    businessMatchesAny(p, ['כושר', 'ספורט', 'fitness', 'gym', 'מבצע', 'promotion'])
-  ) {
-    return 'bold_sales';
-  }
-
-  if (postGoal === 'awareness' && businessMatchesAny(p, ['יוקרתי', 'luxury', 'premium'])) {
-    return 'minimal_luxury';
-  }
-
-  return 'premium_instagram';
-}
-
-const DEFAULT_CREATIVE_LAYOUTS: Record<CreativeTemplate, PosterLayout> = {
-  bold_sales: {
-    text_position: 'bottom',
-    logo_position: 'top-right',
-    cta_position: 'bottom-right',
-    safe_area:
-      'Bottom third has a dark gradient and enough clean empty space for a large bold Hebrew headline and CTA button.',
-  },
-  elegant_beauty: {
-    text_position: 'right',
-    logo_position: 'top-right',
-    cta_position: 'bottom-right',
-    safe_area:
-      'Right side has soft clean negative space for elegant RTL Hebrew text without covering the hero subject.',
-  },
-  food_promo: {
-    text_position: 'bottom',
-    logo_position: 'top-right',
-    cta_position: 'bottom',
-    safe_area:
-      'Bottom third has intentional dark empty space for bold Hebrew offer text while food remains visible above.',
-  },
-  premium_instagram: {
-    text_position: 'top',
-    logo_position: 'top-right',
-    cta_position: 'bottom-right',
-    safe_area:
-      'Top third has calm clean copy space and the product/service hero remains visible in the center.',
-  },
-  minimal_luxury: {
-    text_position: 'center',
-    logo_position: 'top-left',
-    cta_position: 'bottom',
-    safe_area:
-      'Center or lower-center has generous minimal copy space with lots of premium empty area around the text.',
-  },
-};
 
 function inferPostGoal(
   profile: BusinessProfile,
@@ -1380,650 +1049,6 @@ function inferPostGoal(
   return 'awareness';
 }
 
-function buildFooterContact(p: BusinessProfile): string | undefined {
-  if (!p) return undefined;
-  const phone = p.phone?.trim();
-  if (phone) return phone;
-
-  const website = (p.websiteUrl ?? p.website)?.trim();
-  if (!website) return undefined;
-
-  return website
-    .replace(/^https?:\/\//i, '')
-    .replace(/^www\./i, '')
-    .replace(/\/$/g, '');
-}
-
-function buildDefaultPosterFooter(p: BusinessProfile): string | undefined {
-  const footerParts = dedupe([
-    p?.businessName ?? '',
-    buildFooterContact(p) ?? '',
-  ]);
-  return footerParts.length ? footerParts.join(' | ') : undefined;
-}
-
-function buildDefaultCta(
-  p: BusinessProfile,
-  industryCategory?: string | null,
-): string {
-  if (isRestaurantBusiness(p, industryCategory)) return 'הזמינו עכשיו';
-  if (isFitnessBusiness(p)) {
-    return 'התחילו עכשיו';
-  }
-  if (isBeautyBusiness(p)) {
-    return 'קבעו תור';
-  }
-  if (isFashionBusiness(p) || isRetailProductBusiness(p, industryCategory)) {
-    return 'לקנייה עכשיו';
-  }
-  if (isRealEstateBusiness(p)) {
-    return 'תאמו ביקור';
-  }
-  if (isLegalOrCorporateBusiness(p)) {
-    return 'לתיאום שיחה';
-  }
-  return 'לפרטים';
-}
-
-// Short, modern, 2-3 word Hebrew fallback set. Used only when the generator
-// model fails to return valid JSON. No offer/promo is invented — only the
-// generator can decide if a real offer is part of the post.
-function buildFallbackOnImageText(
-  p: BusinessProfile,
-  industryCategory?: string | null,
-  template: PosterTemplate = selectPosterTemplate(p, industryCategory),
-): PosterText {
-  const footer = buildDefaultPosterFooter(p);
-
-  if (template === 'sushi_delivery') {
-    return {
-      headline: '10% הנחה',
-      subtitle: 'משלוחים עד הבית',
-      cta: 'הזמינו עכשיו',
-      offer: 'סושי טרי',
-      footer,
-    };
-  }
-
-  if (template === 'restaurant_promo') {
-    return {
-      headline: 'חדש בתפריט',
-      subtitle: 'טרי מהמטבח',
-      cta: 'הזמינו עכשיו',
-      footer,
-    };
-  }
-
-  if (template === 'pizza_promo') {
-    return {
-      headline: 'מבצע השבוע',
-      subtitle: 'חם מהתנור',
-      cta: 'הזמינו עכשיו',
-      offer: '1+1',
-      footer,
-    };
-  }
-
-  if (template === 'cafe_bakery') {
-    return {
-      headline: 'בוקר מושלם',
-      subtitle: 'קפה ומאפה טרי',
-      cta: 'בואו לבקר',
-      offer: 'טרי היום',
-      footer,
-    };
-  }
-
-  if (template === 'gym_campaign') {
-    return {
-      headline: 'מתחילים היום',
-      subtitle: 'אימון שמתאים לכם',
-      cta: 'התחילו עכשיו',
-      offer: 'שיעור ניסיון',
-      footer,
-    };
-  }
-
-  if (template === 'beauty_luxury') {
-    return {
-      headline: 'היופי שלך',
-      subtitle: 'טיפול ברמה אחרת',
-      cta: 'קבעו תור',
-      footer,
-    };
-  }
-
-  if (template === 'nails_manicure') {
-    return {
-      headline: 'מראה מושלם',
-      subtitle: 'ציפורניים ברמה אחרת',
-      cta: 'קבעו תור',
-      offer: 'לק חדש',
-      footer,
-    };
-  }
-
-  if (template === 'hair_barber') {
-    return {
-      headline: 'לוק חדש',
-      subtitle: 'תוצאה שמרגישים',
-      cta: 'קבעו תור',
-      footer,
-    };
-  }
-
-  if (template === 'fashion_boutique') {
-    return {
-      headline: 'קולקציה חדשה',
-      subtitle: 'סטייל שנראה טוב',
-      cta: 'לקנייה עכשיו',
-      offer: 'חדש',
-      footer,
-    };
-  }
-
-  if (template === 'real_estate') {
-    return {
-      headline: 'הבית הבא',
-      subtitle: 'מחכה לכם כאן',
-      cta: 'תאמו ביקור',
-      footer,
-    };
-  }
-
-  if (template === 'legal_corporate') {
-    return {
-      headline: 'ייעוץ מקצועי',
-      subtitle: 'בראש שקט',
-      cta: 'לתיאום שיחה',
-      footer,
-    };
-  }
-
-  if (template === 'judaica_luxury') {
-    return {
-      headline: 'יוקרה מסורתית',
-      subtitle: 'פריט עם נשמה',
-      cta: 'לפרטים',
-      footer,
-    };
-  }
-
-  if (template === 'retail_product') {
-    return {
-      headline: 'חדש אצלנו',
-      subtitle: 'איכות שמרגישים',
-      cta: 'לקנייה עכשיו',
-      offer: 'מלאי חדש',
-      footer,
-    };
-  }
-
-  return {
-    headline: 'בדיוק בשבילכם',
-    subtitle: 'שירות מקצועי',
-    cta: buildDefaultCta(p, industryCategory),
-    footer,
-  };
-}
-
-// ─── Business-anchored visual mandate ────────────────────────────────────────
-// Hard "MUST SHOW / MUST NOT SHOW" block that locks the hero image to the
-// actual business category. Switched on the same PosterTemplate enum used by
-// the rest of the pipeline so the mandate, photo template, and frontend
-// composition stay in sync.
-function buildBusinessVisualMandate(
-  p: NonNullable<BusinessProfile>,
-  industryCategory: string | null,
-): { mustShow: string; mustNotShow: string; categoryLabel: string } {
-  const template = selectPosterTemplate(p, industryCategory);
-
-  switch (template) {
-    case 'sushi_delivery':
-      return {
-        categoryLabel: 'Israeli sushi restaurant',
-        mustShow:
-          'fresh sushi rolls (maki), nigiri, sashimi, soy sauce, chopsticks, ' +
-          'wasabi, ginger, and a dark slate or wooden board. Japanese-restaurant ' +
-          'atmosphere. Premium food photography of the actual dishes.',
-        mustNotShow:
-          'pizza, burgers, pasta, sandwiches, salads as the hero, generic Italian ' +
-          'or American food, random people eating, random restaurant interiors ' +
-          'unrelated to Japanese cuisine.',
-      };
-
-    case 'pizza_promo':
-      return {
-        categoryLabel: 'Israeli pizzeria',
-        mustShow:
-          'fresh hot pizza slices with melted cheese, pepperoni or vegetable toppings, ' +
-          'wooden pizza peel, brick oven backdrop, Italian pizza-restaurant feel.',
-        mustNotShow: 'sushi, Asian food, burgers as the hero, random unrelated dishes.',
-      };
-
-    case 'cafe_bakery':
-      return {
-        categoryLabel: 'Israeli café / bakery',
-        mustShow:
-          'fresh pastries, coffee cups with latte art, wooden bakery counter, ' +
-          'warm café atmosphere, hands plating, soft natural daylight.',
-        mustNotShow:
-          'sushi, pizza, gym equipment, salon scenes, unrelated industries.',
-      };
-
-    case 'restaurant_promo':
-      return {
-        categoryLabel: 'Israeli restaurant',
-        mustShow:
-          'the actual dishes the business serves, plated beautifully, premium ' +
-          'restaurant food photography, real ingredients, restaurant atmosphere.',
-        mustNotShow:
-          'unrelated cuisines, random food categories the business does not serve, ' +
-          'random people eating who are not the focus.',
-      };
-
-    case 'gym_campaign':
-      return {
-        categoryLabel: 'Israeli fitness / gym',
-        mustShow:
-          'gym equipment (kettlebells, dumbbells, barbells), training environment, ' +
-          'sweat-marked floors, athletic atmosphere. Equipment is the hero.',
-        mustNotShow:
-          'food, restaurants, beauty products, random unrelated industries, ' +
-          'random celebrities, brand logos that are not this business.',
-      };
-
-    case 'beauty_luxury':
-      return {
-        categoryLabel: 'Israeli luxury beauty / cosmetics',
-        mustShow:
-          'beauty / cosmetic products, salon environment, marble or glass surfaces, ' +
-          'soft diffused light, hands working on a treatment, refined luxury detail.',
-        mustNotShow:
-          'food, gym equipment, unrelated industries, random celebrities, ' +
-          'brand logos that are not this business.',
-      };
-
-    case 'nails_manicure':
-      return {
-        categoryLabel: 'Israeli nail salon',
-        mustShow:
-          'macro close-up of glossy lacquered nails on an elegant hand, soft silk or ' +
-          'marble backdrop, refined polish bottles, manicure tools just visible.',
-        mustNotShow:
-          'food, gym equipment, generic beauty products unrelated to nails, ' +
-          'distorted hands or extra fingers, random celebrities.',
-      };
-
-    case 'hair_barber':
-      return {
-        categoryLabel: 'Israeli barbershop / hair salon',
-        mustShow:
-          'editorial salon portrait — sharp haircut detail, scissors and mirrors blurred ' +
-          'in the background, warm vintage salon atmosphere. The salon environment IS the hero.',
-        mustNotShow:
-          'food, gym equipment, generic beauty products, random celebrities, ' +
-          'brand logos that are not this business.',
-      };
-
-    case 'fashion_boutique':
-      return {
-        categoryLabel: 'Israeli fashion boutique',
-        mustShow:
-          'styled garments or accessories the boutique sells, clean editorial fashion flat-lay ' +
-          'or styled mannequin, modern boutique environment.',
-        mustNotShow:
-          'food, gym equipment, fast-fashion brand logos, random celebrities, ' +
-          'brand logos that are not this business.',
-      };
-
-    case 'real_estate':
-      return {
-        categoryLabel: 'Israeli luxury real estate / property',
-        mustShow:
-          'interior or exterior of a real property, golden-hour or premium interior light, ' +
-          'clean staged architectural composition, aspirational lifestyle.',
-        mustNotShow:
-          'food, gym, beauty products, unrelated industries, fake brand signage.',
-      };
-
-    case 'legal_corporate':
-      return {
-        categoryLabel: 'Israeli law firm / corporate consultancy',
-        mustShow:
-          'modern minimalist office detail — leather chair, marble desk, brass pen, legal book, ' +
-          'or a refined architectural office corner. Trusted-authority atmosphere.',
-        mustNotShow:
-          'food, gym equipment, beauty products, casual interiors, cluttered office stock photos, ' +
-          'random celebrities, scales of justice clipart, gavel clipart cartoonish.',
-      };
-
-    case 'judaica_luxury':
-      return {
-        categoryLabel: 'Israeli luxury Judaica brand',
-        mustShow:
-          'menorah, mezuzah, shofar or other Judaica piece on a dark walnut surface, ' +
-          'candlelight glow, brass and dark-wood detail, reverent traditional atmosphere.',
-        mustNotShow:
-          'food, gym equipment, beauty products, unrelated retail, cartoon religious clipart.',
-      };
-
-    case 'retail_product':
-      return {
-        categoryLabel: 'Israeli retail / boutique',
-        mustShow:
-          'the actual products the business sells, styled cleanly on shelves or a flat surface, ' +
-          'modern boutique environment, premium retail photography.',
-        mustNotShow:
-          'food unrelated to the business, gym scenes, unrelated industries, ' +
-          'brand logos that are not this business.',
-      };
-
-    case 'general_business_ad':
-      break; // fall through to the generic fallback below
-  }
-
-  // Generic fallback uses whatever services/products the profile lists so the
-  // image model still has something concrete to anchor to.
-  const services = [
-    p.services ?? '',
-    ...(p.websiteServices ?? []),
-  ]
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .slice(0, 3)
-    .join(', ');
-
-  return {
-    categoryLabel: p.businessType ?? 'local business',
-    mustShow: services
-      ? `the actual offering of this business: ${services}.`
-      : 'the actual product or service this business provides.',
-    mustNotShow:
-      'unrelated industries, third-party brand logos, fake celebrity faces.',
-  };
-}
-
-// ─── Industry background template ────────────────────────────────────────────
-// Returns the short, focused opening line for the image model. Non-photo modes
-// now request ONLY a realistic background/product photo with clean negative
-// space. Typography, CTA, logo, and flyer design are composed by our app.
-// Per-template creative brief. Every industry gets its own unique combination
-// of photography style, composition, palette, mood and "headline-safe area"
-// — so two different industries never produce visually similar backgrounds.
-type IndustryBackgroundBrief = {
-  opening: string;          // Lead sentence (highest image-model weight).
-  composition: string;      // How the hero is framed.
-  palette: string;          // Concrete color direction for the photo.
-  mood: string;             // Emotional register.
-  headlineSafeArea: string; // Where the photo must leave room for overlay text.
-};
-
-function buildIndustryBackgroundTemplate(
-  p: NonNullable<BusinessProfile>,
-  template: PosterTemplate,
-): IndustryBackgroundBrief {
-  switch (template) {
-    case 'sushi_delivery':
-      return {
-        opening:
-          'EXTREME CLOSE-UP cinematic food photography of fresh sushi for a premium Israeli sushi-brand Instagram ad. ' +
-          'The sushi IS the hero — glossy salmon nigiri, maki rolls cut to show interior, sashimi slices, ' +
-          'condensation droplets on fresh fish, soy sauce reflection, chopsticks resting on the side. ' +
-          'Premium dark restaurant food photography, NOT a wide restaurant shot, NOT a storefront.',
-        composition:
-          'Tight macro framing, sushi fills 65-75% of the frame, shot at 45° or top-down. ' +
-          'Shallow depth of field (f/1.8), one piece in razor-sharp focus, the rest melting into bokeh. ' +
-          'Hero pieces placed on the right two-thirds, dark slate or polished black surface fills the rest.',
-        palette:
-          'Deep charcoal black, polished dark slate, glossy salmon orange-pink, soft cream rice, ' +
-          'jade green wasabi, amber soy accents. Dark-on-dark luxury food advertising palette.',
-        mood: 'Refined, appetizing, premium Japanese luxury food advertising — Wolt/Sushi Express campaign quality.',
-        headlineSafeArea:
-          'Reserve the upper-left third of the frame as smooth dark out-of-focus surface (slate, polished wood, or moody background bokeh) with NO food, NO objects, NO patterns occupying it — pure dark negative space for headline overlay.',
-      };
-
-    case 'pizza_promo':
-      return {
-        opening:
-          'EXTREME CLOSE-UP cinematic food photography of fresh hot pizza for a premium Israeli pizzeria Instagram ad. ' +
-          'The pizza IS the hero — melted cheese pull mid-stretch, golden bubbling crust char, vibrant toppings, ' +
-          'tomato sauce glistening, basil leaf on top, light steam rising. ' +
-          'Premium close-up food photography, NOT a wide pizzeria shot, NOT a storefront.',
-        composition:
-          'Tight close-up of one slice being lifted (cheese pull) or top-down macro of one full pizza. ' +
-          'Pizza fills 70% of the frame. Shallow depth of field (f/2.0), razor-sharp focus on cheese & crust texture.',
-        palette:
-          'Warm tomato red, golden bubbling crust, melted yellow cheese, charred dark edges, ' +
-          'rustic wood, ember warm light. Appetizing food-magazine palette.',
-        mood: 'Warm, mouth-watering, premium Italian-pizzeria food advertising — Domino\'s/Pizza Hut campaign quality without their branding.',
-        headlineSafeArea:
-          'Reserve the upper-left quadrant as smooth dark out-of-focus area (dark wood, dark stone, or moody bokeh) with NO food, NO objects, NO patterns — pure dark negative space for headline overlay.',
-      };
-
-    case 'cafe_bakery':
-      return {
-        opening:
-          'EXTREME CLOSE-UP cinematic food photography of fresh pastries and coffee for a premium Israeli café Instagram ad. ' +
-          'The food IS the hero — golden flaky croissant, warm steam from latte cup, latte art swirl, ' +
-          'powdered-sugar pastry, hands plating, warm wooden counter texture. ' +
-          'Premium close-up café food photography, NOT a wide café shot, NOT a storefront.',
-        composition:
-          'Tight macro 45° angle on a single pastry + coffee cup, food fills 65% of the frame, ' +
-          'shallow depth of field with warm bokeh, soft natural daylight.',
-        palette:
-          'Warm cream, latte brown, golden pastry crust, beige linen, soft pastels. Natural-daylight food-magazine palette.',
-        mood: 'Cozy, contemporary, slow-morning café food advertising — Aroma/Lehem Erez quality without branding.',
-        headlineSafeArea:
-          'Reserve the upper-right area as smooth cream / latte-toned out-of-focus surface (warm wood, soft napkin, blurred kitchen bokeh) with NO food, NO objects, NO text — pure soft negative space for headline overlay.',
-      };
-
-    case 'restaurant_promo':
-      return {
-        opening:
-          'EXTREME CLOSE-UP cinematic food photography of one signature plated dish for a premium Israeli restaurant Instagram ad. ' +
-          'The dish IS the hero — glistening sauce, fresh herbs, tactile textures, ' +
-          'restaurant-grade plating, shallow depth of field, warm tungsten restaurant lighting. ' +
-          'Premium close-up food photography, NOT a wide restaurant shot, NOT a dining-room shot, NOT a storefront.',
-        composition:
-          'Tight close-up 45° angle on one hero dish, dish fills 65-75% of the frame, ' +
-          'razor-sharp focus on key texture, restaurant ambient bokeh behind.',
-        palette:
-          'Warm tungsten light, earthy plate tones, deep restaurant background. Amber, terracotta, deep green accents.',
-        mood: 'Appetizing, refined, restaurant-magazine cover quality.',
-        headlineSafeArea:
-          'Reserve a darker calm out-of-focus area at the top of the frame (dark restaurant bokeh or dark plate edge) with NO food, NO objects, NO patterns occupying it — pure dark negative space for headline overlay.',
-      };
-
-    case 'gym_campaign':
-      return {
-        opening:
-          'EXTREME CLOSE-UP commercial photography of premium gym equipment for an Israeli fitness-brand Instagram ad. ' +
-          'The equipment IS the hero — sweat-marked black kettlebell, knurled barbell grip, ' +
-          'dumbbells stacked, chalk dust in the air, hard rim light catching the metal edge. ' +
-          'NO full-body athletes mid-pose, NO gym-floor wide shots, NO building exteriors.',
-        composition:
-          'Tight low-angle macro on one piece of equipment, equipment fills 60% of frame, ' +
-          'hard directional rim light, deep dramatic shadows around the hero.',
-        palette:
-          'Charcoal black, concrete grey, electric blue or vivid orange single accent, deep shadows.',
-        mood: 'Powerful, kinetic, motivational dramatic fitness-campaign close-up — Nike Training quality without branding.',
-        headlineSafeArea:
-          'Reserve the lower-left or upper area as deep-shadow out-of-focus space (pure black, dark concrete, or motion-blurred dark background) with NO equipment, NO body parts — pure dark negative space for headline overlay.',
-      };
-
-    case 'beauty_luxury':
-      return {
-        opening:
-          'EXTREME CLOSE-UP cinematic beauty photography for a premium Israeli luxury beauty / cosmetics Instagram ad. ' +
-          'The product IS the hero — a cosmetic bottle on marble, hand gently applying cream, ' +
-          'glossy lip detail, dewy skin texture, brushed-gold packaging detail. ' +
-          'NO full-face portraits, NO wide salon shots, NO storefronts.',
-        composition:
-          'Tight macro 45° or side angle on a single product or hand-treatment, hero fills 55-65% of frame, ' +
-          'large soft negative space, softbox diffused light.',
-        palette:
-          'Blush pink, cream, ivory, soft brushed gold, marble white. Diffused softbox light.',
-        mood: 'Elegant feminine luxury beauty campaign — Aesop/Glossier close-up quality without branding.',
-        headlineSafeArea:
-          'Reserve a soft cream / blush smooth out-of-focus area along the top (marble surface or blush bokeh) with NO products, NO body parts, NO patterns — pure soft negative space for headline overlay.',
-      };
-
-    case 'nails_manicure':
-      return {
-        opening:
-          'EXTREME CLOSE-UP MACRO photography of beautifully manicured nails for a premium Israeli nail-salon Instagram ad. ' +
-          'The hand and nails ARE the hero — glossy lacquered nails with perfect reflections, ' +
-          'one elegant hand posed on silk / velvet / marble. ' +
-          'NO full-face portraits, NO wide salon shots, NO storefronts.',
-        composition:
-          'Hyper-detailed macro, hand fills 50-60% of frame, silk/velvet/marble surface behind, ' +
-          'soft pastel bokeh, beauty-detail lighting.',
-        palette:
-          'Pastel or jewel-tone polish, blush, lavender, dusty rose, soft champagne gold.',
-        mood: 'Hyper-refined, tactile, glossy beauty-detail photography.',
-        headlineSafeArea:
-          'Reserve a soft pastel out-of-focus area in the upper-right (silk bokeh or marble surface) with NO hand, NO objects, NO patterns — pure soft negative space for headline overlay.',
-      };
-
-    case 'hair_barber':
-      return {
-        opening:
-          'EXTREME CLOSE-UP editorial photography of a precise haircut detail for a premium Israeli barbershop Instagram ad. ' +
-          'The haircut IS the hero — sharp fade detail, beard-trim precision, hairstyle silhouette, ' +
-          'scissors mid-cut, salon detail blurred in background. ' +
-          'NO full-portrait headshots, NO wide salon shots, NO storefronts.',
-        composition:
-          'Tight side-profile macro on hair / fade / beard detail, hero fills 60-70% of frame, ' +
-          'strong rim light, warm tungsten bokeh behind.',
-        palette:
-          'Warm leather brown, amber tungsten, deep navy, vintage cream. Cinematic warm tones.',
-        mood: 'Confident, fashion-magazine salon advertising, editorial cool — Murdock London quality without branding.',
-        headlineSafeArea:
-          'Reserve a dark warm out-of-focus salon-bokeh area on the left with NO objects, NO body parts, NO patterns — pure dark negative space for headline overlay.',
-      };
-
-    case 'fashion_boutique':
-      return {
-        opening:
-          'EXTREME CLOSE-UP editorial fashion photography for a premium Israeli boutique Instagram ad. ' +
-          'The garment / accessory IS the hero — fabric texture detail, stitching, leather grain, ' +
-          'jewelry on neutral surface, styled flat-lay close-up. ' +
-          'NO full-body model shots, NO street-style shots, NO storefronts.',
-        composition:
-          'Editorial macro on fabric / garment detail or single accessory, hero fills 55-65% of frame, ' +
-          'generous whitespace, soft directional studio light.',
-        palette:
-          'Neutral premium — soft tan, cream, charcoal, with ONE bold accent color (terracotta, deep red, or olive).',
-        mood: 'Trendy, refined, magazine-cover editorial fashion campaign — Aritzia/COS quality without branding.',
-        headlineSafeArea:
-          'Reserve a clean neutral smooth out-of-focus area along the top (cream surface or soft fabric bokeh) with NO garments, NO objects — pure neutral negative space for headline overlay.',
-      };
-
-    case 'real_estate':
-      return {
-        opening:
-          'EXTREME CLOSE-UP architectural-detail photography for a premium Israeli luxury real-estate Instagram ad. ' +
-          'A refined INTERIOR DETAIL is the hero — warm interior corner with designer chair + side table, ' +
-          'window light hitting hardwood floor, key turning in a brass lock, marble countertop with brass tap. ' +
-          'NO wide building exteriors, NO storefronts, NO street scenes, NO city skylines, NO neighborhoods.',
-        composition:
-          'Tight architectural detail at 45° or eye-level, hero fills 60-70% of frame, ' +
-          'shallow depth of field, warm window light, premium interior bokeh.',
-        palette:
-          'Warm beige, deep terracotta, charcoal accents, warm golden-hour interior light. Aspirational lifestyle tones.',
-        mood: 'Modern luxury property marketing, refined and serene — premium interior-detail photography.',
-        headlineSafeArea:
-          'Reserve a calm warm-toned out-of-focus area in the upper part of the frame (cream wall bokeh or warm interior shadow) with NO furniture, NO objects, NO patterns — pure soft negative space for headline overlay.',
-      };
-
-    case 'legal_corporate':
-      return {
-        opening:
-          'EXTREME CLOSE-UP still-life photography for a premium Israeli law-firm / consultancy Instagram ad. ' +
-          'A refined OBJECT DETAIL is the hero — brass fountain pen on marble, leather-bound legal book ' +
-          'with brass corner, hand signing a document with a heavy pen, marble surface with watch and pen. ' +
-          'NO building exteriors, NO storefronts, NO wide office shots, NO city skylines.',
-        composition:
-          'Tight 45° close-up on a single refined object, hero fills 55-65% of frame, ' +
-          'controlled studio light, premium still-life styling.',
-        palette:
-          'Deep navy, charcoal, ivory, brass and warm wood accents. Soft natural window light.',
-        mood: 'Trustworthy, polished, authoritative — premium corporate still-life photography.',
-        headlineSafeArea:
-          'Reserve a calm ivory or navy smooth out-of-focus area at the top (marble surface or soft wall bokeh) with NO objects, NO patterns — pure refined negative space for headline overlay.',
-      };
-
-    case 'judaica_luxury':
-      return {
-        opening:
-          'EXTREME CLOSE-UP still-life photography for a premium Israeli luxury Judaica brand Instagram ad. ' +
-          'A single Judaica piece IS the hero — polished brass menorah arms, a mezuzah with hand-engraved detail, ' +
-          'silver Kiddush cup catching candlelight, on a dark walnut surface. ' +
-          'NO synagogue interiors, NO building exteriors, NO storefronts.',
-        composition:
-          'Tight 45° close-up on a single piece, hero fills 60-70% of frame, candlelight glow, ' +
-          'dark walnut surface bokeh behind, soft directional light.',
-        palette:
-          'Brass, deep walnut, ivory candle glow, deep navy. Rich traditional luxury palette.',
-        mood: 'Refined, reverent, traditional luxury still-life.',
-        headlineSafeArea:
-          'Reserve a dark walnut smooth out-of-focus area along the top with NO objects, NO patterns — pure dark negative space for headline overlay.',
-      };
-
-    case 'retail_product':
-      return {
-        opening:
-          'EXTREME CLOSE-UP studio product photography for a premium Israeli retail Instagram ad. ' +
-          'The product IS the hero — clean macro of the actual item the business sells, ' +
-          'styled on a seamless backdrop with controlled studio light. ' +
-          'NO storefront shots, NO retail-floor shots, NO street scenes, NO model shots.',
-        composition:
-          'Tight studio shot on a single hero product, product fills 60-70% of frame, ' +
-          'soft seamless backdrop, controlled directional light.',
-        palette:
-          'Clean neutral premium palette derived from the product itself, with one supporting accent.',
-        mood: 'Clean modern ecommerce product photography, premium and aspirational.',
-        headlineSafeArea:
-          'Reserve a clean seamless smooth area in the upper third (solid seamless background) with NO products, NO objects, NO patterns — pure seamless negative space for headline overlay.',
-      };
-
-    case 'general_business_ad':
-      return {
-        opening:
-          `EXTREME CLOSE-UP commercial photography for an Israeli social-media ad for "${p.businessName}". ` +
-          'The actual product or service detail this business provides IS the hero — macro on the deliverable, ' +
-          'styled and lit like a premium magazine campaign. ' +
-          'NO building exteriors, NO storefronts, NO wide environment shots, NO city scenes.',
-        composition:
-          'Tight close-up at 45°, single hero subject fills 60% of frame, controlled premium light, ' +
-          'refined out-of-focus negative space.',
-        palette:
-          'Clean modern neutral palette aligned with the business brand colors.',
-        mood: 'Premium, refined, contemporary Israeli local-business close-up photography.',
-        headlineSafeArea:
-          'Reserve a calm smooth out-of-focus area in the upper third (solid or blurred neutral background) with NO objects, NO patterns — pure clean negative space for headline overlay.',
-      };
-  }
-}
-
-type CreativePlanContext = {
-  businessContext: string;
-  websiteContext: string;
-  visualContext: string;
-  assetInsight: BrandAssetInsight | null;
-  recentPostSummaries: string[];
-  styleByType: BusinessStyle | null;
-  identity: VisualIdentity;
-  sceneDescription: string;
-  servicesFromAllSources: string[];
-  cleanTopic: string;
-  captionText: string;
-  postImageType: Exclude<PostImageType, 'photo'>;
-  posterTemplate: PosterTemplate;
-  creativeTemplate: CreativeTemplate;
-  languageMode: PosterLanguageMode;
-};
 
 function parseJsonObject(raw: string): Record<string, unknown> | null {
   const trimmed = raw.trim();
@@ -2087,25 +1112,18 @@ function normalizePosterType(value: unknown, fallback: PosterType): PosterType {
     : fallback;
 }
 
-function normalizeLayoutDensity(value: unknown, fallback: LayoutDensity): LayoutDensity {
-  const normalized = String(value ?? '').toLowerCase().trim();
-  const allowed: LayoutDensity[] = ['minimal', 'medium', 'rich'];
-  return allowed.includes(normalized as LayoutDensity)
-    ? (normalized as LayoutDensity)
-    : fallback;
-}
-
-function normalizeLayoutHierarchy(value: unknown, fallback: LayoutHierarchy): LayoutHierarchy {
-  const normalized = String(value ?? '').toLowerCase().trim();
-  const allowed: LayoutHierarchy[] = ['strong', 'elegant', 'soft', 'bold'];
-  return allowed.includes(normalized as LayoutHierarchy)
-    ? (normalized as LayoutHierarchy)
-    : fallback;
-}
-
 function normalizeTextElementRole(value: unknown): TextElementRole | null {
   const normalized = String(value ?? '').toLowerCase().trim();
-  const allowed: TextElementRole[] = ['headline', 'subheadline', 'offer', 'cta', 'brand_name'];
+  const allowed: TextElementRole[] = [
+    'headline',
+    'subheadline',
+    'body',
+    'offer',
+    'badge',
+    'cta',
+    'footer',
+    'brand_name',
+  ];
   return allowed.includes(normalized as TextElementRole)
     ? (normalized as TextElementRole)
     : null;
@@ -2119,14 +1137,28 @@ function normalizeTextElementImportance(value: unknown): TextElementImportance {
     : 'secondary';
 }
 
-function normalizeTextElements(value: unknown, fallback: TextElement[]): TextElement[] {
-  if (!Array.isArray(value)) return fallback;
+function normalizeTextElements(
+  value: unknown,
+  fallback: TextElement[],
+  maxElements = 9,
+): TextElement[] {
+  if (!Array.isArray(value)) return fallback.slice(0, maxElements);
+  const maxTextLengthByRole: Record<TextElementRole, number> = {
+    headline: 44,
+    subheadline: 52,
+    body: 72,
+    offer: 44,
+    badge: 28,
+    cta: 34,
+    footer: 52,
+    brand_name: 44,
+  };
   const elements = value
     .map((item): TextElement | null => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
       const raw = item as Record<string, unknown>;
       const role = normalizeTextElementRole(raw.role);
-      const text = cleanPosterText(raw.text, role === 'headline' ? 34 : 28);
+      const text = cleanPosterText(raw.text, role ? maxTextLengthByRole[role] : 44);
       if (!role || !text) return null;
       return {
         role,
@@ -2140,119 +1172,9 @@ function normalizeTextElements(value: unknown, fallback: TextElement[]): TextEle
     .filter((element, index, arr) =>
       arr.findIndex((candidate) => candidate.role === element.role && candidate.text === element.text) === index,
     )
-    .slice(0, 5);
+    .slice(0, maxElements);
 
-  return limited.length ? limited : fallback;
-}
-
-function normalizeTextPosition(value: unknown, fallback: TextPosition): TextPosition {
-  const normalized = String(value ?? '').toLowerCase().trim();
-  const allowed: TextPosition[] = ['top', 'bottom', 'right', 'left', 'center'];
-  return allowed.includes(normalized as TextPosition)
-    ? (normalized as TextPosition)
-    : fallback;
-}
-
-function normalizeLogoPosition(value: unknown, fallback: LogoPosition): LogoPosition {
-  const normalized = String(value ?? '').toLowerCase().trim();
-  const allowed: LogoPosition[] = ['top-right', 'top-left', 'bottom-right', 'bottom-left'];
-  return allowed.includes(normalized as LogoPosition)
-    ? (normalized as LogoPosition)
-    : fallback;
-}
-
-function normalizeCtaPosition(value: unknown, fallback: CtaPosition): CtaPosition {
-  const normalized = String(value ?? '').toLowerCase().trim();
-  const allowed: CtaPosition[] = ['bottom', 'center', 'bottom-right', 'bottom-left'];
-  return allowed.includes(normalized as CtaPosition)
-    ? (normalized as CtaPosition)
-    : fallback;
-}
-
-function normalizeLayout(value: unknown, creativeTemplate: CreativeTemplate): PosterLayout {
-  const fallback = DEFAULT_CREATIVE_LAYOUTS[creativeTemplate];
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return fallback;
-  const layout = value as Record<string, unknown>;
-
-  return {
-    text_position: normalizeTextPosition(layout.text_position, fallback.text_position),
-    logo_position: normalizeLogoPosition(layout.logo_position, fallback.logo_position),
-    cta_position: normalizeCtaPosition(layout.cta_position, fallback.cta_position),
-    safe_area:
-      String(layout.safe_area ?? fallback.safe_area)
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 240) || fallback.safe_area,
-  };
-}
-
-function visualStyleForTemplate(template: CreativeTemplate): CreativeVisualStyle {
-  switch (template) {
-    case 'bold_sales':
-      return 'bold';
-    case 'elegant_beauty':
-      return 'elegant';
-    case 'food_promo':
-      return 'dramatic';
-    case 'minimal_luxury':
-      return 'luxury';
-    default:
-      return 'premium';
-  }
-}
-
-function fallbackPosterTypeForGoal(postGoal: PostGoal): PosterType {
-  switch (postGoal) {
-    case 'sale':
-    case 'promotion':
-      return 'offer';
-    case 'booking':
-      return 'booking';
-    case 'holiday':
-      return 'seasonal';
-    case 'new_product':
-      return 'product_spotlight';
-    case 'reminder':
-      return 'reminder';
-    case 'awareness':
-      return 'brand';
-    default:
-      return 'promotion';
-  }
-}
-
-function fallbackStructureForGoal(postGoal: PostGoal): PosterStructure {
-  switch (postGoal) {
-    case 'sale':
-    case 'promotion':
-      return 'offer_sale';
-    case 'booking':
-      return 'booking_focused';
-    case 'holiday':
-      return 'seasonal_mood';
-    case 'new_product':
-      return 'product_spotlight';
-    case 'reminder':
-      return 'question_hook';
-    default:
-      return 'soft_branding';
-  }
-}
-
-function normalizePosterStructure(value: unknown, fallback: PosterStructure): PosterStructure {
-  const normalized = String(value ?? '').toLowerCase().trim();
-  const allowed: PosterStructure[] = [
-    'bold_promo',
-    'soft_branding',
-    'product_spotlight',
-    'question_hook',
-    'booking_focused',
-    'seasonal_mood',
-    'offer_sale',
-  ];
-  return allowed.includes(normalized as PosterStructure)
-    ? (normalized as PosterStructure)
-    : fallback;
+  return limited.length ? limited : fallback.slice(0, maxElements);
 }
 
 function resolvePosterLanguageMode(): PosterLanguageMode {
@@ -2265,648 +1187,18 @@ function resolvePosterLanguageMode(): PosterLanguageMode {
   return 'hebrew';
 }
 
-function buildFallbackTextElements({
-  profile,
-  postGoal,
-  template,
-  languageMode,
-  hebrewFallback,
-}: {
-  profile: NonNullable<BusinessProfile>;
-  postGoal: PostGoal;
-  template: PosterTemplate;
-  languageMode: PosterLanguageMode;
-  hebrewFallback: PosterText;
-}): TextElement[] {
-  if (languageMode === 'hebrew') {
-    const elements: TextElement[] = [
-      { role: 'headline', text: hebrewFallback.headline, importance: 'primary' },
-    ];
-    if (hebrewFallback.subtitle) {
-      elements.push({
-        role: 'subheadline',
-        text: hebrewFallback.subtitle,
-        importance: 'secondary',
-      });
-    }
-    if (
-      hebrewFallback.cta &&
-      (postGoal === 'sale' || postGoal === 'promotion' || postGoal === 'booking')
-    ) {
-      elements.push({ role: 'cta', text: hebrewFallback.cta, importance: 'small' });
-    }
-    if (profile.businessName) {
-      elements.push({ role: 'brand_name', text: profile.businessName, importance: 'small' });
-    }
-    return elements;
-  }
 
-  const headline = (() => {
-    if (postGoal === 'sale' || postGoal === 'promotion') return 'Special Offer';
-    if (postGoal === 'booking') return 'Book Your Spot';
-    if (postGoal === 'new_product') return 'New Arrival';
-    if (
-      template === 'sushi_delivery' ||
-      template === 'restaurant_promo' ||
-      template === 'pizza_promo' ||
-      template === 'cafe_bakery'
-    ) {
-      return 'Fresh Taste';
-    }
-    if (template === 'gym_campaign') return 'Start Strong';
-    if (
-      template === 'beauty_luxury' ||
-      template === 'nails_manicure' ||
-      template === 'hair_barber'
-    ) {
-      return 'Feel Your Best';
-    }
-    if (template === 'fashion_boutique') return 'New Season';
-    if (template === 'real_estate') return 'Live Better';
-    return 'Made For You';
-  })();
-
-  const subtitle = (() => {
-    if (
-      template === 'sushi_delivery' ||
-      template === 'restaurant_promo' ||
-      template === 'pizza_promo' ||
-      template === 'cafe_bakery'
-    ) {
-      return 'Premium local flavor';
-    }
-    if (template === 'gym_campaign') return 'Energy that moves you';
-    if (
-      template === 'beauty_luxury' ||
-      template === 'nails_manicure' ||
-      template === 'hair_barber'
-    ) {
-      return 'A polished premium experience';
-    }
-    if (template === 'fashion_boutique') return 'Editorial style, everyday confidence';
-    return 'Professional service with a premium touch';
-  })();
-
-  const cta = (() => {
-    if (postGoal === 'booking') return 'Book Now';
-    if (postGoal === 'sale' || postGoal === 'promotion') return 'Learn More';
-    return '';
-  })();
-
-  const elements: TextElement[] = [
-    { role: 'headline', text: headline, importance: 'primary' },
-    { role: 'subheadline', text: subtitle, importance: 'secondary' },
-  ];
-  if (cta) elements.push({ role: 'cta', text: cta, importance: 'small' });
-
-  const englishBrandName = englishOnlyOrEmpty(profile.businessName);
-  if (englishBrandName) {
-    elements.push({ role: 'brand_name', text: englishBrandName, importance: 'small' });
-  }
-  return elements;
-}
-
-async function generateCreativePlan(
-  businessProfile: NonNullable<BusinessProfile>,
-  postGoal: PostGoal,
-  openai: OpenAI,
-  context: CreativePlanContext,
-  acc: CostAccumulator,
-): Promise<PostCreativePlan> {
-  const fallbackLayout = DEFAULT_CREATIVE_LAYOUTS[context.creativeTemplate];
-  const languageMode = context.languageMode;
-  const fallbackText = buildFallbackOnImageText(
-    businessProfile,
-    context.styleByType?.category ?? null,
-    context.posterTemplate,
-  );
-  const fallbackTextElements = buildFallbackTextElements({
-    profile: businessProfile,
-    postGoal,
-    template: context.posterTemplate,
-    languageMode,
-    hebrewFallback: fallbackText,
-  });
-  const fallbackPlan: PostCreativePlan = {
-    poster_type: fallbackPosterTypeForGoal(postGoal),
-    visual_style: visualStyleForTemplate(context.creativeTemplate),
-    tone: businessProfile.tone ?? businessProfile.style ?? context.identity.mood,
-    main_message: fallbackTextElements[0]?.text ?? fallbackText.headline,
-    text_elements: fallbackTextElements,
-    layout_direction: {
-      density: fallbackTextElements.length <= 2 ? 'minimal' : 'medium',
-      hierarchy: postGoal === 'sale' || postGoal === 'promotion' ? 'bold' : 'elegant',
-    },
-    style_notes: context.identity.mood,
-    image_prompt_direction: context.sceneDescription || businessProfile.description || '',
-    language_mode: languageMode,
-    show_cta: fallbackTextElements.some((element) => element.role === 'cta'),
-    poster_structure: fallbackStructureForGoal(postGoal),
-    layout: fallbackLayout,
-  };
-
-  try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'system',
-          content:
-            'You are the creative strategy director for Easy-M, an Israeli AI marketing-post generator. ' +
-            'Return JSON only. Act like a designer plus creative director, not a repetitive template. ' +
-            'First decide what kind of post this should be, how many text elements it needs, whether it needs a CTA at all, and what style/layout fits the business and goal. ' +
-            'OpenAI Image API will generate the complete final poster image, including text and design. ' +
-            'Write short poster copy and a clear visual concept for a polished, agency-level final ad.',
-        },
-        {
-          role: 'user',
-          content:
-            `Business profile:\n${context.businessContext}${context.websiteContext}\n\n` +
-            `Business type: ${businessProfile.businessType ?? 'unknown'}\n` +
-            `Business name: ${businessProfile.businessName ?? ''}\n` +
-            `Target audience: ${businessProfile.audience ?? businessProfile.targetAudience ?? ''}\n` +
-            `Services/products: ${dedupe([
-              businessProfile.services ?? '',
-              businessProfile.products ?? '',
-              ...(businessProfile.websiteServices ?? []),
-              ...context.servicesFromAllSources,
-            ]).join(', ')}\n` +
-            `Brand colors: ${businessProfile.brandColors ?? context.identity.colorPalette}\n` +
-            `Tone: ${businessProfile.tone ?? businessProfile.style ?? businessProfile.websiteTone ?? context.identity.mood}\n` +
-            `Logo available: ${Boolean(businessProfile.logoUrl)}\n` +
-            `Uploaded images available: ${(businessProfile.images?.length ?? 0) + (businessProfile.uploadedImages?.length ?? 0)}\n` +
-            (context.assetInsight?.visualSummary
-              ? `Uploaded-photo intelligence: ${context.assetInsight.visualSummary}\n`
-              : '') +
-            (context.assetInsight?.visualStyleSummary
-              ? `Extracted uploaded-photo visual style: ${context.assetInsight.visualStyleSummary}\n`
-              : '') +
-            (context.assetInsight?.productHints?.length
-              ? `Real products/services seen in uploaded images: ${context.assetInsight.productHints.join(', ')}\n`
-              : '') +
-            (context.assetInsight?.atmosphereHints?.length
-              ? `Atmosphere cues from uploaded images: ${context.assetInsight.atmosphereHints.join(', ')}\n`
-              : '') +
-            (context.assetInsight?.lightingHints?.length
-              ? `Lighting cues from uploaded images: ${context.assetInsight.lightingHints.join(', ')}\n`
-              : '') +
-            (context.assetInsight?.compositionHints?.length
-              ? `Composition cues from uploaded images: ${context.assetInsight.compositionHints.join(', ')}\n`
-              : '') +
-            (context.assetInsight?.colorHints?.length
-              ? `Real brand color/material cues: ${context.assetInsight.colorHints.join(', ')}\n`
-              : '') +
-            (context.assetInsight?.textureHints?.length
-              ? `Realistic texture cues: ${context.assetInsight.textureHints.join(', ')}\n`
-              : '') +
-            (context.assetInsight?.brandingHints?.length
-              ? `Brand consistency cues from uploaded images: ${context.assetInsight.brandingHints.join(', ')}\n`
-              : '') +
-            (context.assetInsight?.avoidHints?.length
-              ? `Avoid from uploaded images: ${context.assetInsight.avoidHints.join(', ')}\n`
-              : '') +
-            `Recent previous posts to avoid repeating:\n${context.recentPostSummaries.join('\n') || 'none'}\n` +
-            `Post goal: ${postGoal}\n` +
-            `User topic: ${context.cleanTopic || 'auto'}\n` +
-            `Poster text language mode: ${languageMode}.\n` +
-            (languageMode === 'hebrew'
-              ? '────────────────────────────────────────────────────────\n' +
-                'HEBREW MODE — text_elements MUST be in natural, short, professional Israeli Hebrew.\n' +
-                'Vary the structure between posts. DO NOT always use headline + subheadline + CTA.\n' +
-                'DO NOT always use "הזמינו עכשיו". Pick one of the structures below that fits this post:\n\n' +
-                '  • OFFER (1-3 elements):\n' +
-                '      "20% הנחה על כל התפריט" / "רק השבוע" / optional "בואו לטעום"\n' +
-                '  • BRAND (1-2 elements):\n' +
-                '      "חוויה יפנית שלא תשכחו" + small brand_name\n' +
-                '  • PRODUCT SPOTLIGHT (1-2 elements):\n' +
-                '      "סושי טרי. מדויק. ממכר." + small brand_name\n' +
-                '  • QUESTION HOOK (2 elements):\n' +
-                '      "מוכנים לביס המושלם?" + "הסושי של [שם] מחכה לכם"\n' +
-                '  • MINIMAL PREMIUM (1-2 elements):\n' +
-                '      "טעם של יפן" + small brand_name\n\n' +
-                'Hebrew rules:\n' +
-                '  • Use 1–4 text elements total. Many of the best posters use just 1 or 2.\n' +
-                '  • Keep each line short and poster-friendly (a few words to ~7 words max).\n' +
-                '  • Adapt the examples to THIS business (replace Japanese/sushi nouns with whatever the profile sells).\n' +
-                '  • Hebrew must sound like native Israeli social-media copy. No literal translations from English, no robotic grammar, no generic AI slogans.\n' +
-                '  • Prefer concrete, human phrases over abstract claims. Good Hebrew is short, confident, and emotionally clear.\n' +
-                '  • If Hebrew rendering may be risky, prefer fewer and shorter words. Avoid quotes, slashes, long punctuation runs, and complex mixed RTL/LTR phrasing.\n' +
-                '  • Do not include English in text_elements except for the brand name when it is genuinely the business\'s English name.\n' +
-                '  • Avoid repeating the same structure or wording across posts (see recent posts list).\n' +
-                '────────────────────────────────────────────────────────\n'
-              : 'ENGLISH MODE — text_elements MUST be in short, polished English. ' +
-                'Do not include Hebrew in text_elements. Same variation rules: do not always use headline + sub + CTA, vary the structure.\n') +
-            `Caption context:\n${context.captionText}\n\n` +
-            `Selected visual family: ${context.creativeTemplate}\n` +
-            `Preferred layout defaults: ${JSON.stringify(DEFAULT_CREATIVE_LAYOUTS[context.creativeTemplate])}\n` +
-            `Commercial scene seed:\n${context.sceneDescription}\n\n` +
-            'Possible poster types: promotion, brand, product_spotlight, booking, seasonal, question_hook, announcement, reminder, offer.\n' +
-            'Rules for variation:\n' +
-            '- Do not always use a CTA. Only include a cta text element when it genuinely helps this post goal.\n' +
-            '- Do not always use the same CTA. If used, make it context-specific.\n' +
-            '- Do not always use headline + subheadline + CTA. A soft branding post can use one elegant sentence and no CTA.\n' +
-            '- Keep all text short, natural, poster-friendly, and readable.\n' +
-            '- Avoid awkward Hebrew, literal translations, stiff phrases, and robotic wording. The final copy must feel written by a real Israeli social media manager.\n' +
-            '- Use at most 4 text elements, including brand_name. Do not invent prices, phone numbers, URLs, addresses, QR codes, hashtags, or fake contact details.\n\n' +
-            'Art-direction rules:\n' +
-            '- Make a distinct layout choice for THIS post; do not default to a centered generic template.\n' +
-            '- Use uploaded-image cues when available so the ad feels like this real business, not stock content. Treat them as visual inspiration for color, mood, products, lighting, atmosphere, and composition — do not ask to paste the exact uploaded photo.\n' +
-            '- Plan typography placement with safe margins, clear hierarchy, and clean RTL reading order when Hebrew is used.\n' +
-            '- Keep the poster premium and uncluttered; fewer stronger elements are better than a busy flyer.\n\n' +
-            'Return JSON only with exactly this structure:\n' +
-            '{\n' +
-            '  "poster_type": "promotion | brand | product_spotlight | booking | seasonal | question_hook | announcement | reminder | offer",\n' +
-            '  "visual_style": "premium | bold | elegant | dramatic | minimal | luxury | friendly | energetic",\n' +
-            '  "tone": "short tone description",\n' +
-            '  "main_message": "one-sentence strategic message",\n' +
-            '  "text_elements": [\n' +
-            '    { "role": "headline | subheadline | offer | cta | brand_name", "text": "short poster text", "importance": "primary | secondary | small" }\n' +
-            '  ],\n' +
-            '  "layout_direction": {\n' +
-            '    "density": "minimal | medium | rich",\n' +
-            '    "hierarchy": "strong | elegant | soft | bold"\n' +
-            '  },\n' +
-            '  "style_notes": "English design direction: typography mood, spacing, palette, composition",\n' +
-            '  "image_prompt_direction": "English visual direction for OpenAI Image API: hero subject, mood, lighting, palette, layout feeling, composition"\n' +
-            '}\n\n' +
-            'Important: style_notes and image_prompt_direction must be English only.',
-        },
-      ],
-      max_tokens: 950,
-    });
-
-    trackTextCost(acc, 'creative_plan', 'gpt-4o-mini', response.usage);
-
-    const raw = response.choices[0]?.message?.content?.trim() ?? '';
-    const parsed = parseJsonObject(raw);
-    if (!parsed) return fallbackPlan;
-
-    const layout = normalizeLayout(parsed.layout, context.creativeTemplate);
-    const textElements = normalizeTextElements(parsed.text_elements, fallbackTextElements);
-    const layoutDirectionSource =
-      parsed.layout_direction && typeof parsed.layout_direction === 'object'
-        ? (parsed.layout_direction as Record<string, unknown>)
-        : {};
-    const plan: PostCreativePlan = {
-      poster_type: normalizePosterType(parsed.poster_type, fallbackPlan.poster_type),
-      visual_style: normalizeVisualStyle(parsed.visual_style, fallbackPlan.visual_style),
-      tone: cleanPosterText(parsed.tone, 120) || fallbackPlan.tone,
-      main_message: cleanPosterText(parsed.main_message, 160) || fallbackPlan.main_message,
-      text_elements: textElements,
-      layout_direction: {
-        density: normalizeLayoutDensity(layoutDirectionSource.density, fallbackPlan.layout_direction.density),
-        hierarchy: normalizeLayoutHierarchy(
-          layoutDirectionSource.hierarchy,
-          fallbackPlan.layout_direction.hierarchy,
-        ),
-      },
-      style_notes:
-        stripHebrewForImagePrompt(String(parsed.style_notes ?? '')).slice(0, 700) ||
-        fallbackPlan.style_notes,
-      image_prompt_direction:
-        stripHebrewForImagePrompt(String(parsed.image_prompt_direction ?? '')).slice(0, 900) ||
-        fallbackPlan.image_prompt_direction,
-      language_mode: languageMode,
-      show_cta: textElements.some((element) => element.role === 'cta'),
-      poster_structure: normalizePosterStructure(
-        parsed.poster_structure ?? parsed.poster_type,
-        fallbackPlan.poster_structure,
-      ),
-      layout,
-    };
-
-    devInfo('🧠 [generateCreativePlan] OpenAI creative plan', {
-      creativeTemplate: context.creativeTemplate,
-      postGoal,
-      posterType: plan.poster_type,
-      visualStyle: plan.visual_style,
-      languageMode: plan.language_mode,
-      textElementCount: plan.text_elements.length,
-      layoutDirection: plan.layout_direction,
-      layoutPosition: plan.layout.text_position,
-    });
-
-    return plan;
-  } catch (error) {
-    devError('🧠 [generateCreativePlan] failed, using fallback plan', {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return fallbackPlan;
-  }
-}
-
-// ─── Hebrew → English fallback wrapper ───────────────────────────────────────
-// Hebrew mode is a safe test mode. If Hebrew text_elements come back empty,
-// suspiciously short, or contain no Hebrew characters at all, we retry the
-// whole creative plan in English mode. This guarantees the user never sees
-// a stuck loading state because of a bad Hebrew generation.
-//
-// Returns { plan, languageUsed, fallbackHappened, fallbackReason }.
-async function generateCreativePlanWithLanguageFallback(
-  businessProfile: NonNullable<BusinessProfile>,
-  postGoal: PostGoal,
-  openai: OpenAI,
-  context: CreativePlanContext,
-  acc: CostAccumulator,
-): Promise<{
-  plan: PostCreativePlan;
-  languageUsed: PosterLanguageMode;
-  fallbackHappened: boolean;
-  fallbackReason: string | null;
-}> {
-  const requested = context.languageMode;
-
-  // English-mode requests go straight through.
-  if (requested === 'english') {
-    const plan = await generateCreativePlan(businessProfile, postGoal, openai, context, acc);
-    return { plan, languageUsed: 'english', fallbackHappened: false, fallbackReason: null };
-  }
-
-  // Hebrew mode: try Hebrew first.
-  let hebrewPlan: PostCreativePlan | null = null;
-  let hebrewFailureReason: string | null = null;
-  try {
-    hebrewPlan = await generateCreativePlan(businessProfile, postGoal, openai, context, acc);
-  } catch (error) {
-    hebrewFailureReason = `hebrew_threw:${error instanceof Error ? error.message : String(error)}`;
-  }
-
-  // Defensive validation. Only fall back when we have a strong signal that
-  // the Hebrew plan is unusable — empty list, or zero Hebrew characters in
-  // any element. Anything else (including odd structure) is fine.
-  if (hebrewPlan) {
-    const hebrewChars = /[֐-׿]/;
-    const hasAnyHebrew = hebrewPlan.text_elements.some((el) => hebrewChars.test(el.text));
-    if (hebrewPlan.text_elements.length === 0) {
-      hebrewFailureReason = 'no_text_elements_returned';
-    } else if (!hasAnyHebrew) {
-      hebrewFailureReason = 'no_hebrew_characters_in_text_elements';
-    } else {
-      devInfo('🧠 [creativePlanWithFallback] Hebrew plan accepted', {
-        elementCount: hebrewPlan.text_elements.length,
-      });
-      return {
-        plan: hebrewPlan,
-        languageUsed: 'hebrew',
-        fallbackHappened: false,
-        fallbackReason: null,
-      };
-    }
-  }
-
-  devWarn('🧠 [creativePlanWithFallback] Hebrew failed, retrying in English', {
-    reason: hebrewFailureReason,
-  });
-
-  const englishContext: CreativePlanContext = { ...context, languageMode: 'english' };
-  const englishPlan = await generateCreativePlan(
-    businessProfile,
-    postGoal,
-    openai,
-    englishContext,
-    acc,
-  );
-
-  return {
-    plan: englishPlan,
-    languageUsed: 'english',
-    fallbackHappened: true,
-    fallbackReason: hebrewFailureReason ?? 'hebrew_validation_failed',
-  };
-}
-
-function posterTextFromCreativePlan(
-  creativePlan: PostCreativePlan,
-  p: BusinessProfile,
-  industryCategory?: string | null,
-  template?: PosterTemplate,
-): PosterText {
-  const fallback = buildFallbackOnImageText(p, industryCategory, template);
-  const headline = creativePlan.text_elements.find((element) => element.role === 'headline');
-  const offer = creativePlan.text_elements.find((element) => element.role === 'offer');
-  const subheadline = creativePlan.text_elements.find((element) => element.role === 'subheadline');
-  const cta = creativePlan.text_elements.find((element) => element.role === 'cta');
-  return {
-    headline: headline?.text || offer?.text || creativePlan.main_message || fallback.headline,
-    subtitle: subheadline?.text || undefined,
-    body: subheadline ? undefined : creativePlan.main_message || undefined,
-    cta: creativePlan.show_cta ? cta?.text || fallback.cta : undefined,
-    offer: offer?.text,
-    footer: fallback.footer,
-  };
-}
-
-function buildOpenAICompletePosterPrompt({
-  profile,
-  posterText,
-  creativePlan,
-  posterTemplate,
-  postGoal,
-  identity,
-  sceneDescription,
-  servicesFromAllSources,
-  assetInsight,
-}: {
-  profile: NonNullable<BusinessProfile>;
-  posterText: PosterText;
-  creativePlan: PostCreativePlan | null;
-  posterTemplate: PosterTemplate;
-  postGoal: PostGoal;
-  identity: VisualIdentity;
-  sceneDescription: string;
-  servicesFromAllSources: string[];
-  assetInsight?: BrandAssetInsight | null;
-}): string {
-  const industryCategory = resolveBusinessStyle(profile)?.category ?? null;
-  const brief = buildIndustryBackgroundTemplate(profile, posterTemplate);
-  const mandate = buildBusinessVisualMandate(profile, industryCategory);
-  const businessType = englishOnlyOrEmpty(profile.businessType) || mandate.categoryLabel;
-  const businessName = profile.businessName?.trim() ?? '';
-  const brandMood = profile.tone ?? profile.websiteTone ?? profile.style ?? identity.mood;
-  const brandColors = profile.brandColors ?? identity.colorPalette;
-  const services = dedupe([
-    profile.services ?? '',
-    profile.products ?? '',
-    ...(profile.websiteServices ?? []),
-    ...servicesFromAllSources,
-  ]).slice(0, 6);
-  const supportLine = posterText.subtitle?.trim() || posterText.body?.trim() || '';
-  const cta = posterText.cta?.trim() ?? '';
-  const posterType = creativePlan?.poster_type ?? fallbackPosterTypeForGoal(postGoal);
-  const visualStyle = creativePlan?.visual_style ?? visualStyleForTemplate(
-    selectCreativeTemplate(profile, postGoal, posterTemplate),
-  );
-  const languageMode = creativePlan?.language_mode ?? resolvePosterLanguageMode();
-  const textElements = creativePlan?.text_elements?.length
-    ? creativePlan.text_elements
-    : [
-        { role: 'headline', text: posterText.headline, importance: 'primary' },
-        ...(supportLine
-          ? [{ role: 'subheadline' as const, text: supportLine, importance: 'secondary' as const }]
-          : []),
-        ...(cta ? [{ role: 'cta' as const, text: cta, importance: 'small' as const }] : []),
-      ];
-  const textElementLines = textElements
-    .map((element, index) =>
-      `${index + 1}. ${element.role} (${element.importance}): "${element.text}"`,
-    )
-    .join('\n');
-  const creativeDirection = creativePlan?.image_prompt_direction?.trim();
-  const styleNotes = creativePlan?.style_notes?.trim();
-  const languageInstruction =
-    languageMode === 'hebrew'
-      ? 'Text language mode: Hebrew. Render ONLY the listed Hebrew words with careful RTL direction, readable bold Hebrew typography, correct letter order, no mirrored letters, and no Hebrew-like gibberish. If unsure, make the typography simpler, larger, and cleaner.'
-      : 'Text language mode: English. Render the listed English words only. Do not include Hebrew characters in the poster image.';
-  const density = creativePlan?.layout_direction.density ?? 'medium';
-  const hierarchy = creativePlan?.layout_direction.hierarchy ?? 'strong';
-  const uploadedAssetDirection =
-    assetInsight && (
-      assetInsight.visualSummary ||
-      assetInsight.visualStyleSummary ||
-      assetInsight.productHints.length ||
-      assetInsight.atmosphereHints?.length ||
-      assetInsight.lightingHints?.length ||
-      assetInsight.compositionHints?.length ||
-      assetInsight.colorHints?.length ||
-      assetInsight.textureHints?.length ||
-      assetInsight.brandingHints?.length
-    )
-      ? (
-          'Uploaded business photo intelligence to use as real-world inspiration, NOT as pasted source images:\n' +
-          `- Image context used: ${assetInsight.imageContextUsed ? 'yes' : 'no'}; analyzed assets: ${assetInsight.analyzedImageCount}.\n` +
-          (assetInsight.visualSummary ? `- Visual summary: ${assetInsight.visualSummary}\n` : '') +
-          (assetInsight.visualStyleSummary
-            ? `- Extracted visual style: ${assetInsight.visualStyleSummary}.\n`
-            : '') +
-          (assetInsight.productHints.length
-            ? `- Actual visible products/services: ${assetInsight.productHints.join(', ')}.\n`
-            : '') +
-          (assetInsight.atmosphereHints?.length
-            ? `- Atmosphere/vibe cues: ${assetInsight.atmosphereHints.join(', ')}.\n`
-            : '') +
-          (assetInsight.lightingHints?.length
-            ? `- Lighting cues: ${assetInsight.lightingHints.join(', ')}.\n`
-            : '') +
-          (assetInsight.compositionHints?.length
-            ? `- Composition/crop cues: ${assetInsight.compositionHints.join(', ')}.\n`
-            : '') +
-          (assetInsight.colorHints?.length
-            ? `- Real brand colors/materials: ${assetInsight.colorHints.join(', ')}.\n`
-            : '') +
-          (assetInsight.textureHints?.length
-            ? `- Realistic texture cues: ${assetInsight.textureHints.join(', ')}.\n`
-            : '') +
-          (assetInsight.brandingHints?.length
-            ? `- Brand consistency cues: ${assetInsight.brandingHints.join(', ')}.\n`
-            : '') +
-          (assetInsight.avoidHints?.length
-            ? `- Avoid these weak/off-brand cues: ${assetInsight.avoidHints.join(', ')}.\n`
-            : '') +
-          'Translate these cues into a new original premium campaign visual. Do not copy the uploaded images exactly, do not collage them, and do not paste them into the poster. Use them to avoid generic stock imagery and preserve brand consistency.\n\n'
-        )
-      : '';
-
-  // Derive luxury tier from combined cues: profile, visual style, audience.
-  const audienceLower = (profile.audience ?? profile.targetAudience ?? '').toLowerCase();
-  const descLower = (profile.description ?? profile.websiteSummary ?? '').toLowerCase();
-  const isLuxury = ['luxury', 'premium', 'high-end', 'exclusive', 'boutique', 'vip', 'elite'].some(
-    (kw) => audienceLower.includes(kw) || descLower.includes(kw) || visualStyle.includes(kw),
-  );
-  const luxuryTier = isLuxury ? 'luxury/premium brand' : 'professional quality brand';
-
-  // Uniqueness & differentiator copy from profile
-  const uniqueness = [profile.uniqueness, profile.description]
-    .map((s) => (s ?? '').trim())
-    .filter(Boolean)
-    .join(' — ')
-    .slice(0, 200);
-
-  // Target audience description
-  const targetAudience = (profile.audience ?? profile.targetAudience ?? '').trim();
-
-  // Website keywords — high-signal terms for visual context
-  const websiteKeywords = (profile.websiteKeywords ?? []).slice(0, 8).join(', ');
-
-  return (
-    `Create ONE single premium professional square (1:1) social media advertisement poster for a ${businessType} business.\n` +
-    `Design tier: ${luxuryTier}. This is a polished final ad — the quality of a top advertising agency output.\n` +
-    'This is the ONLY image being generated — invest everything into making it as good as possible.\n' +
-    'No templates, no stock-photo look, no Canva aesthetic. Original, campaign-quality design.\n\n' +
-
-    '═══ BUSINESS PROFILE ═══\n' +
-    `Business name: ${businessName || 'no readable brand name available'}.\n` +
-    `Business category: ${businessType}.\n` +
-    `Brand mood/tone: ${creativePlan?.tone ?? brandMood}.\n` +
-    `Brand color palette: ${brandColors}.\n` +
-    (targetAudience ? `Target audience: ${targetAudience}.\n` : '') +
-    (uniqueness ? `Unique positioning/description: ${uniqueness}.\n` : '') +
-    (websiteKeywords ? `Brand keywords: ${websiteKeywords}.\n` : '') +
-    (services.length ? `Products/services to feature: ${services.join(', ')}.\n` : '') +
-    `Marketing goal: ${postGoal}.\n` +
-    `Main message: ${creativePlan?.main_message ?? posterText.headline}.\n\n` +
-
-    '═══ CREATIVE DIRECTION ═══\n' +
-    `Poster type: ${posterType}.\n` +
-    `Visual style: ${visualStyle}.\n` +
-    `Layout direction: ${density} density, ${hierarchy} hierarchy.\n` +
-    (creativeDirection ? `Creative visual direction: ${creativeDirection}\n` : '') +
-    (styleNotes ? `Style notes: ${styleNotes}\n` : '') +
-    `Scene direction: ${stripHebrewForImagePrompt(sceneDescription) || brief.opening}\n` +
-    `Industry-specific campaign direction: ${brief.mood} ${brief.palette} ${brief.composition}.\n\n` +
-
-    uploadedAssetDirection +
-
-    '═══ LOGO INTEGRATION ═══\n' +
-    (profile.logoUrl
-      ? 'A PNG of the real brand logo is attached as a reference image. ' +
-        'Place the actual logo into the poster as a designed-in element — NOT as a pasted sticker. ' +
-        'PRESERVE the logo PNG\'s native transparency exactly — do NOT add a white card, white rounded square, white pill, white box, white shape, drop shadow card, or any solid background behind it. ' +
-        'Transparent pixels stay transparent so the logo sits directly on the poster background. ' +
-        'Placement: top corner, bottom corner, elegant signature mark, embossed watermark, or refined brand mark — whatever fits this poster style. ' +
-        'Size: small enough to read as branding, never the dominant element. ' +
-        'Subtle realistic glow or soft shadow is fine ONLY when it reads as natural lighting — never a flat card. ' +
-        'The logo should feel designed-in from the start, not added afterwards.\n'
-      : 'No real logo uploaded. If marking the brand at all, render only the business name in compact on-brand typography — no fake logo shapes, no invented mark.\n') +
-    '\n' +
-
-    '═══ TYPOGRAPHY ═══\n' +
-    `${languageInstruction}\n` +
-    'Use ONLY these text elements inside the poster — render nothing else:\n' +
-    `${textElementLines}\n` +
-    (!textElements.some((element) => element.role === 'cta')
-      ? 'No CTA button is needed for this poster.\n'
-      : '') +
-    'Typography rules: maximum 1–2 primary text lines, generous margins, strong contrast, no more than two font styles. ' +
-    'No tiny unreadable text, no text over busy areas, no accidental extra labels. ' +
-    'For Hebrew: preserve RTL order, use simple bold readable letterforms, never mirror letters.\n\n' +
-
-    '═══ COMPOSITION & QUALITY ═══\n' +
-    'Square 1:1 poster, clear safe margins, no clipping, no text outside margins.\n' +
-    'Build a deliberate graphic design system: clean grid, controlled negative space, realistic shadows, elegant gradients only where they improve readability, one dominant focal subject.\n' +
-    'Integrate typography with photography using hierarchy and spacing. Avoid default centered layouts unless minimal luxury is explicitly called for.\n' +
-    'No duplicated text, no repeated headline, no random words, no overcrowding.\n\n' +
-
-    '═══ AVOID (hard rules) ═══\n' +
-    'messy layout, cluttered poster, cheap design, basic Canva look, generic template, generic AI ad, generic stock-photo look, ' +
-    'plain photo with text, simple overlay, amateur flyer, duplicated text, random words, bad typography, ' +
-    'mirrored Hebrew, broken Hebrew letter order, Hebrew-like glyphs, fake phone number, fake website, fake address, ' +
-    'fake QR code, fake hashtags, fake price, blurry, low quality, text outside margins, too many text elements, ' +
-    'plastic AI look, flat illustration, distorted hands, distorted letters, gibberish, ' +
-    'logo on a white card, logo on a white rounded square, logo on a white pill, logo inside a white box, ' +
-    'logo with a solid colored card behind it, logo as a pasted sticker, logo with a heavy drop-shadow card, ' +
-    'opaque rectangle behind the logo, fake background behind the logo, white halo around the logo.'
-  );
-}
 
 // ─── Simple, visual-focused image prompt ─────────────────────────────────────
 // Replaces the large buildOpenAICompletePosterPrompt. This prompt is short and
-// focuses the image model on visuals + branding. The locked Hebrew text override
-// (headline + subtitle) is appended separately via buildHebrewTextOverride.
+// focuses the image model on visuals + branding. Premium ads use an open
+// creative-director prompt; designed mode can still append a locked Hebrew
+// text override via buildHebrewTextOverride.
 // ─────────────────────────────────────────────────────────────────────────────
 function buildSimpleImagePrompt({
   profile,
   brief,
+  approvedTextElements,
   assetInsight,
   identity,
   focus,
@@ -2914,9 +1206,12 @@ function buildSimpleImagePrompt({
   styleByType,
   servicesFromAllSources,
   postImageType,
+  topic,
+  postGoal,
 }: {
   profile: NonNullable<BusinessProfile>;
   brief: MarketingBrief;
+  approvedTextElements: TextElement[];
   assetInsight: BrandAssetInsight | null;
   identity: VisualIdentity;
   focus: ReturnType<typeof pickVisualFocus>;
@@ -2924,17 +1219,29 @@ function buildSimpleImagePrompt({
   styleByType: ReturnType<typeof resolveBusinessStyle>;
   servicesFromAllSources: string[];
   postImageType: PostImageType;
+  topic: string;
+  postGoal: PostGoal;
 }): string {
   const businessType = englishOnlyOrEmpty(profile.businessType) || (profile.businessType ?? 'business');
   const businessName = profile.businessName?.trim() ?? '';
   const brandColors = (profile.brandColors ?? identity.colorPalette).trim();
+  const website = (profile.websiteUrl ?? profile.website)?.trim();
+  const targetAudience = (profile.audience ?? profile.targetAudience ?? '').trim();
+  const tone = (profile.tone ?? profile.style ?? profile.websiteTone ?? identity.mood).trim();
+  const description = [profile.description, profile.uniqueness, profile.websiteSummary]
+    .map((value) => (value ?? '').trim())
+    .filter(Boolean)
+    .join(' ')
+    .slice(0, 520);
+  const websiteKeywords = (profile.websiteKeywords ?? []).slice(0, 8).join(', ');
   const services = dedupe([
     profile.services ?? '',
+    profile.products ?? '',
     ...(profile.websiteServices ?? []),
     ...servicesFromAllSources,
   ])
     .filter(Boolean)
-    .slice(0, 5)
+    .slice(0, 8)
     .join(', ');
 
   const assetBlock =
@@ -2962,6 +1269,14 @@ function buildSimpleImagePrompt({
           : '')
       : '';
 
+  const approvedTextBlock = approvedTextElements.length
+    ? approvedTextElements
+        .map((element, index) =>
+          `${index + 1}. ${element.role} (${element.importance}): "${element.text}"`,
+        )
+        .join('\n')
+    : 'No on-image text. Clean commercial photography only.';
+
   if (postImageType === 'photo') {
     return (
       `Commercial photograph for a ${businessType} business.\n` +
@@ -2978,7 +1293,7 @@ function buildSimpleImagePrompt({
 
   const languageInstruction =
     brief.languageMode === 'hebrew'
-      ? 'Text language: Hebrew (RTL). Render ONLY the listed Hebrew words. ' +
+      ? 'Text language: Hebrew (RTL). Use the approved Hebrew copy plan as the main poster text, arranged as multiple natural designed text areas when appropriate. ' +
         'CRITICAL HEBREW TEXT RULES: ' +
         '(a) Every character must be a genuine Hebrew letter — ZERO Latin/English characters allowed inside Hebrew words. ' +
         'Do NOT substitute any Hebrew letter with a visually similar Latin character (e.g., never use "Y", "X", "O", "I", "1", "l" for any Hebrew letter). ' +
@@ -2986,13 +1301,16 @@ function buildSimpleImagePrompt({
         '(c) If a word has only 2–4 letters, keep it on one line — never break it. ' +
         '(d) If you cannot render a Hebrew glyph accurately, use a simpler font with larger letterforms and more spacing rather than substituting characters. ' +
         '(e) No decorative swashes, diacritics, or punctuation unless it was in the approved text.'
-      : 'Text language: English. Render the listed English words only.';
+      : 'Text language: English. Use the approved English copy plan as the main poster text.';
 
   return (
-    `Create ONE complete professional square (1:1) social media advertisement poster for a ${businessType} business.\n` +
-    'Target quality: premium ChatGPT-style generated image quality, polished final Israeli Instagram/Facebook ad, high-end creative agency finish.\n' +
-    'This must look like a finished designed marketing post, not a random photo with text and not a generic AI image.\n' +
-    'Design quality: luxury commercial layout, strong visual hierarchy, realistic premium photography, clean typography system, refined spacing, CTA-style design language when the approved text calls for it.\n\n' +
+    `Create ONE complete professional SQUARE 1:1 social media advertisement poster for a ${businessType} business.\n` +
+    'The image must be designed for Instagram feed and Facebook feed: 1080x1080-style square composition, centered safe-area layout, and all important logo/text/CTA elements well inside the margins.\n' +
+    'Output should feel like premium ChatGPT image generation: a finished Israeli Instagram/Facebook sponsored ad, high-end creative agency finish, not a rough concept.\n' +
+    'This must be a COMPLETE designed marketing poster, not just a nice photo with one headline. Combine cinematic commercial photography, branded graphic design, Hebrew typography, offer/badge treatment, CTA button, and polished social ad layout.\n' +
+    'The final image should feel like a real designer built a complete campaign creative: visual hero, brand area, main message, supporting copy, offer/badge, CTA, and small footer/business line where appropriate.\n' +
+    'Do NOT create a simple product photo with one text line. Do NOT create a plain photo with basic overlay text. Do NOT leave the poster feeling empty or unfinished.\n' +
+    'Design quality: luxury commercial layout, strong visual hierarchy, realistic premium photography, depth, premium lighting, clean typography system, refined spacing, CTA-style design language, polished social media ad composition.\n\n' +
     `BRAND\n` +
     `Business: ${businessName || businessType}.\n` +
     `Colors: ${brandColors}.\n` +
@@ -3008,16 +1326,27 @@ function buildSimpleImagePrompt({
     `Visual style: ${brief.visualStyle}.\n` +
     (styleByType ? `Industry: ${styleByType.direction}\n` : '') +
     `Focus: ${focus.direction}\nComposition: ${shot.direction}\n` +
+    'Format/layout: square 1:1 feed post composition. Think 1080x1080 premium social ad. Use a balanced safe-area grid with a strong hero visual, brand/logo area, main Hebrew headline block, short subtitle, offer/badge, CTA button/pill, and a small footer/business line when approved text allows it.\n' +
+    'Keep every important element centered within generous safe margins. Nothing important may touch or sit close to the edges. Leave comfortable breathing room around Hebrew letters, logo, CTA, and badge.\n' +
+    'Use layered graphic design: soft gradients, premium panels, subtle glow/border/shadow, depth, realistic textures, and clean separation between photography and text. The poster should look finished and intentional, not like text dropped on a photo.\n' +
     assetBlock +
     '\nTYPOGRAPHY\n' +
     `${languageInstruction}\n` +
-    'Render ONLY the text elements listed in the APPROVED TEXT section below.\n' +
-    'Use professional poster typography: large bold headline, clean secondary line, strong contrast, generous safe margins, clean hierarchy, no duplicated text, no random words.\n' +
-    'For Hebrew: prefer fewer, larger words over small crowded copy. Give each word enough space so every letter is legible. ' +
-    'Hebrew words must not overlap the main visual subject — place text in a clear zone (bottom band, top area, or a contrasting overlay strip).\n' +
-    'Use a clean CTA button/pill only if an approved CTA text element is provided; otherwise do not invent a CTA.\n' +
+    'APPROVED TEXT ELEMENTS — use these as the complete poster copy plan. Render them naturally as separate designed text areas; do not collapse everything into one headline:\n' +
+    `${approvedTextBlock}\n\n` +
+    'Use these approved text elements as a full ad system, not as one isolated headline. Create a clear hierarchy:\n' +
+    '1. Brand/logo area: small and refined near the top safe area.\n' +
+    '2. Main Hebrew headline: large, bold, dominant, readable at phone size.\n' +
+    '3. Short subtitle/support line: smaller but still clear.\n' +
+    '4. Offer/badge: circular badge, sticker, ribbon, or highlighted pill if offer/badge text exists.\n' +
+    '5. CTA: real button/pill with glow/shadow/high contrast if cta text exists.\n' +
+    '6. Small footer/business line: very small brand/detail line only if an approved footer/brand/business text element exists; never invent contact details.\n' +
+    'You may use multiple short text zones when approved text elements exist. The poster should feel like a complete finished advertisement, not a photo with one large headline.\n' +
+    'Use professional Hebrew poster typography: oversized bold headline, clear secondary line, visible body/support line, offer/badge treatment, strong CTA button/pill, strong contrast, generous safe margins, clean hierarchy, no duplicated text, no random words.\n' +
+    'For Hebrew: use multiple readable zones when the copy plan contains them. Keep every text area short and spacious, but do not simplify the whole ad into one large headline. Keep RTL order natural and readable.\n' +
+    'Hebrew words must not overlap the main visual subject — place text in a deliberate clear zone, premium panel, contrast band, or dark/light overlay area.\n' +
     '\nAVOID\n' +
-    'cluttered layout, cheap Canva look, generic AI ad, plain stock photo, random photo with text overlay, logo on white card, logo sticker, ' +
+    'cluttered layout, cheap Canva look, generic AI ad, plain stock photo, random photo with text overlay, very tall 2:3 poster composition, logo on white card, logo sticker, ' +
     'fake phone/price/URL/QR code, duplicated text, distorted letters, broken Hebrew, mirrored RTL text, blurry, low quality, ' +
     'Latin/English letters mixed into Hebrew words, random stray letters (e.g., a lone "Y" or "X") near Hebrew text, ' +
     'substituted characters that resemble Hebrew but are not Hebrew, any non-Hebrew character inside a Hebrew word.'
@@ -3030,14 +1359,23 @@ function buildSimpleImagePrompt({
 // untouched so the model receives the original transparency. Returns null
 // on any failure — the caller falls back to images.generate without a logo
 // reference, so a flaky logo download never blocks generation.
-async function fetchLogoAsUploadable(
-  logoUrl: string | undefined,
-): Promise<{ file: Uploadable; bytes: number; contentType: string } | null> {
-  if (!logoUrl) return null;
+async function fetchRemoteImageAsUploadable(
+  imageUrl: string | undefined | null,
+  {
+    label,
+    filePrefix,
+    maxBytes = 25 * 1024 * 1024,
+  }: {
+    label: string;
+    filePrefix: string;
+    maxBytes?: number;
+  },
+): Promise<RemoteImageReference | null> {
+  if (!imageUrl) return null;
   try {
-    const response = await fetch(logoUrl);
+    const response = await fetch(imageUrl);
     if (!response.ok) {
-      devWarn('Logo fetch returned non-2xx; skipping logo reference', {
+      devWarn(`${label} fetch returned non-2xx; skipping image reference`, {
         status: response.status,
       });
       return null;
@@ -3045,15 +1383,16 @@ async function fetchLogoAsUploadable(
     const contentType = response.headers.get('content-type') ?? 'image/png';
     // OpenAI images.edit accepts PNG / JPG / WEBP. Anything else gets skipped.
     if (!/^image\/(png|jpe?g|webp)$/i.test(contentType)) {
-      devWarn('Logo content-type not supported by images.edit; skipping', {
+      devWarn(`${label} content-type not supported by images.edit; skipping`, {
         contentType,
       });
       return null;
     }
     const arrayBuffer = await response.arrayBuffer();
-    if (arrayBuffer.byteLength > 25 * 1024 * 1024) {
-      devWarn('Logo larger than 25MB; skipping logo reference', {
+    if (arrayBuffer.byteLength > maxBytes) {
+      devWarn(`${label} larger than max bytes; skipping image reference`, {
         bytes: arrayBuffer.byteLength,
+        maxBytes,
       });
       return null;
     }
@@ -3061,16 +1400,25 @@ async function fetchLogoAsUploadable(
       contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg'
       : contentType.includes('webp') ? 'webp'
       : 'png';
-    const file = await toFile(Buffer.from(arrayBuffer), `logo.${ext}`, {
+    const file = await toFile(Buffer.from(arrayBuffer), `${filePrefix}.${ext}`, {
       type: contentType,
     });
     return { file, bytes: arrayBuffer.byteLength, contentType };
   } catch (error) {
-    devWarn('Logo fetch threw; skipping logo reference', {
+    devWarn(`${label} fetch threw; skipping image reference`, {
       error: error instanceof Error ? error.message : String(error),
     });
     return null;
   }
+}
+
+async function fetchLogoAsUploadable(
+  logoUrl: string | undefined,
+): Promise<RemoteImageReference | null> {
+  return await fetchRemoteImageAsUploadable(logoUrl, {
+    label: 'Logo',
+    filePrefix: 'logo',
+  });
 }
 
 async function generateImageWithOpenAI({
@@ -3079,6 +1427,7 @@ async function generateImageWithOpenAI({
   role,
   languageMode,
   logoFile,
+  styleReferenceFile,
   acc,
 }: {
   openai: OpenAI;
@@ -3086,40 +1435,73 @@ async function generateImageWithOpenAI({
   role: 'photo' | 'complete_poster';
   languageMode: PosterLanguageMode;
   logoFile?: Uploadable | null;
+  styleReferenceFile?: Uploadable | null;
   acc: CostAccumulator;
 }): Promise<string | null> {
+  // Dev/staging A/B switch: when OPENAI_IMAGE_MODEL is set in the Convex
+  // deployment env, use that model instead of the default. Production keeps
+  // running on BEST_OPENAI_IMAGE_MODEL whenever the env var is unset. An
+  // invalid model name will surface as MODEL_NOT_FOUND in the existing error
+  // classifier below — the action still returns a text-only post on failure.
   const configuredModel = process.env.OPENAI_IMAGE_MODEL?.trim();
-  const model = BEST_OPENAI_IMAGE_MODEL;
+  const model = configuredModel || BEST_OPENAI_IMAGE_MODEL;
+  const usingModelOverride = Boolean(configuredModel) && configuredModel !== BEST_OPENAI_IMAGE_MODEL;
+  const imageInputs = [logoFile, styleReferenceFile].filter(
+    (file): file is Uploadable => Boolean(file),
+  );
   const usesLogoReference = Boolean(logoFile);
-  const apiSurface = usesLogoReference ? 'images.edit' : 'images.generate';
+  const usesStyleReference = Boolean(styleReferenceFile);
+  const usesImageReferences = imageInputs.length > 0;
+  const apiSurface = usesImageReferences ? 'images.edit' : 'images.generate';
+  const imageSize = role === 'photo' ? OPENAI_PHOTO_IMAGE_SIZE : OPENAI_POSTER_IMAGE_SIZE;
+
+    // UNCONDITIONAL ENDPOINT SENTINEL — proves which OpenAI endpoint was
+    // actually invoked. images.edit is biased toward image-conditioning;
+    // images.generate is pure text-to-image (preferred for clean premium_ad).
+    console.info('[generatePost] 🟢 OPENAI IMAGE REQUEST START', {
+      activeImageModel: model,
+      defaultImageModel: BEST_OPENAI_IMAGE_MODEL,
+      usingModelOverride,
+      endpointInvoked: apiSurface,
+      role,
+      languageMode,
+      size: imageSize,
+      quality: 'high',
+      logoFilePresent: usesLogoReference,
+      styleReferenceFilePresent: usesStyleReference,
+      imageInputCount: imageInputs.length,
+      promptLength: prompt.length,
+    });
 
     devInfo('🟢 OPENAI IMAGE REQUEST START', {
       model,
-      configuredModel: configuredModel || null,
-      ignoredConfiguredModel: configuredModel && configuredModel !== BEST_OPENAI_IMAGE_MODEL ? configuredModel : null,
+      defaultModel: BEST_OPENAI_IMAGE_MODEL,
+      usingModelOverride,
     apiSurface,
     role,
     languageMode,
-    size: '1024x1024',
+    size: imageSize,
       quality: 'high',
       usesLogoReference,
+      usesStyleReference,
+      imageReferenceCount: imageInputs.length,
       promptLength: prompt.length,
     });
 
   try {
-    const imageResponse = usesLogoReference && logoFile
+    const imageResponse = usesImageReferences
       ? await openai.images.edit({
           model,
-          image: logoFile,
+          image: imageInputs.length === 1 ? imageInputs[0] : imageInputs,
           prompt,
-          size: '1024x1024',
+          size: imageSize,
           quality: 'high',
           n: 1,
         })
       : await openai.images.generate({
           model,
           prompt,
-          size: '1024x1024',
+          size: imageSize,
           quality: 'high',
           n: 1,
         });
@@ -3137,7 +1519,7 @@ async function generateImageWithOpenAI({
       bytesReturned: imageBase64.length,
     });
 
-    trackImageCost(acc, role, model, usesLogoReference ? 'edit' : 'generate');
+    trackImageCost(acc, role, model, usesImageReferences ? 'edit' : 'generate');
     return imageBase64;
   } catch (error) {
     // Extract full OpenAI error details before any re-throw
@@ -3203,6 +1585,11 @@ type MarketingBrief = {
   caption: string;
   headline: string;
   subtitle: string | null;
+  bodyText: string | null;
+  offerText: string | null;
+  ctaText: string | null;
+  badgeText: string | null;
+  footerText: string | null;
   visualStyle: CreativeVisualStyle;
   posterType: PosterType;
   visualDirection: string;
@@ -3210,6 +1597,89 @@ type MarketingBrief = {
   hashtags: string[];
   imageTextMode: ImageTextMode;
 };
+
+function textElementsFromMarketingBrief(
+  brief: MarketingBrief,
+  profile: NonNullable<BusinessProfile>,
+  mode: ImageTextMode,
+  maxElements = 9,
+): TextElement[] {
+  if (mode === 'none') return [];
+
+  const elements: TextElement[] = [
+    { role: 'headline', text: brief.headline, importance: 'primary' },
+  ];
+
+  if (mode === 'headline_and_subtitle' && brief.subtitle) {
+    elements.push({
+      role: 'subheadline',
+      text: brief.subtitle,
+      importance: 'secondary',
+    });
+  }
+
+  if (brief.bodyText) {
+    elements.push({
+      role: 'body',
+      text: brief.bodyText,
+      importance: 'secondary',
+    });
+  }
+
+  if (brief.offerText) {
+    elements.push({
+      role: 'offer',
+      text: brief.offerText,
+      importance: brief.posterType === 'offer' ? 'primary' : 'secondary',
+    });
+  }
+
+  if (brief.badgeText) {
+    elements.push({
+      role: 'badge',
+      text: brief.badgeText,
+      importance: 'small',
+    });
+  }
+
+  const ctaText =
+    brief.ctaText ??
+    (maxElements >= 6
+      ? (brief.languageMode === 'hebrew' ? 'לפרטים' : 'Learn more')
+      : null);
+
+  if (ctaText) {
+    elements.push({
+      role: 'cta',
+      text: ctaText,
+      importance: 'small',
+    });
+  }
+
+  if (brief.footerText) {
+    elements.push({
+      role: 'footer',
+      text: brief.footerText,
+      importance: 'small',
+    });
+  }
+
+  const businessName = profile.businessName?.trim();
+  if (businessName && businessName.length <= 28) {
+    elements.push({
+      role: 'brand_name',
+      text: businessName,
+      importance: 'small',
+    });
+  }
+
+  return elements
+    .filter((element) => element.text.trim().length > 0)
+    .filter((element, index, arr) =>
+      arr.findIndex((candidate) => candidate.text === element.text) === index,
+    )
+    .slice(0, maxElements);
+}
 
 async function generateMarketingBrief(
   openai: OpenAI,
@@ -3257,7 +1727,8 @@ async function generateMarketingBrief(
       ? '\n\nHEBREW copy rules:\n' +
         '• Caption: natural Israeli Hebrew, 2–4 short sentences, Instagram/Facebook style\n' +
         '• Headline: 2–4 Hebrew words, short and punchy (e.g., "מתחילים חזק", "תוצאה שרואים", "טעם של יפן")\n' +
-        '• Subtitle: null unless it genuinely adds a second beat; if used, 2–4 Hebrew words max\n' +
+        '• Premium poster copy should feel complete: headline, subtitle/support line, offer/badge, CTA, and footer/brand line when useful\n' +
+        '• Each text area should be short and readable, but do not reduce the whole poster to only one headline\n' +
         '• NO robotic phrasing, NO literal English translations, NO generic AI slogans\n' +
         '• Brand name stays in English if it is an English name'
       : '';
@@ -3265,13 +1736,24 @@ async function generateMarketingBrief(
   const fallback: MarketingBrief = {
     caption: `${businessName} — ${services || businessType}`.trim(),
     headline: businessName || businessType || 'הזמינו עכשיו',
-    subtitle: null,
+    subtitle: languageMode === 'hebrew' ? 'בסטייל שמרגישים' : 'Designed to stand out',
+    bodyText: languageMode === 'hebrew' ? 'חוויה שמרגישים מהרגע הראשון' : 'A polished experience from the first moment',
+    offerText: postGoal === 'sale' || postGoal === 'promotion'
+      ? (languageMode === 'hebrew' ? 'מבצע מיוחד' : 'Special offer')
+      : null,
+    ctaText: postGoal === 'booking'
+      ? (languageMode === 'hebrew' ? 'קבעו תור' : 'Book now')
+      : postGoal === 'sale' || postGoal === 'promotion'
+        ? (languageMode === 'hebrew' ? 'לפרטים' : 'Learn more')
+        : null,
+    badgeText: languageMode === 'hebrew' ? 'חדש' : 'New',
+    footerText: businessName || businessType || null,
     visualStyle: 'premium',
     posterType: 'brand',
     visualDirection: `A premium professional ${businessType} marketing photo. Clean composition, high-end photography, brand-focused.`,
     languageMode,
     hashtags: [],
-    imageTextMode: 'headline_only',
+    imageTextMode: 'headline_and_subtitle',
   };
 
   try {
@@ -3285,7 +1767,8 @@ async function generateMarketingBrief(
           role: 'system',
           content:
             'You are an Israeli social media marketing expert and creative director. ' +
-            'Generate concise, high-quality marketing copy and a visual scene for a social media poster. ' +
+            'Generate concise, high-quality marketing copy and a visual scene for a COMPLETE designed social media advertisement poster. ' +
+            'The image itself will include the poster copy, branding, CTA/badge when appropriate, and a polished agency-level layout. ' +
             'Return JSON only.',
         },
         {
@@ -3309,21 +1792,26 @@ async function generateMarketingBrief(
               ? `Avoid repeating these recent posts: ${recentPostSummaries.slice(0, 3).join(' | ')}\n`
               : '') +
             hebrewRules +
+            '\n\nPoster copy planning rule:\n' +
+            'For a premium social ad, do NOT return only a headline. When the business context allows it, provide a complete short copy plan with headline, subtitle, body_text, badge_text or offer_text, cta_text, and footer_text. Each field must stay short and readable.\n' +
             '\n\nReturn JSON with exactly this structure:\n' +
             '{\n' +
             `  "caption": "social media caption in ${languageMode === 'hebrew' ? 'Hebrew' : 'English'}. Write 3-5 lines of authentic marketing text. Do NOT include hashtags here.",\n` +
-            `  "headline": "poster headline in ${languageMode === 'hebrew' ? 'Hebrew' : 'English'}, 2–4 words",\n` +
-            '  "subtitle": "short second line or null",\n' +
+            `  "headline": "main poster headline in ${languageMode === 'hebrew' ? 'Hebrew' : 'English'}, 2–5 words, large and bold",\n` +
+            '  "subtitle": "short supporting line, 2–6 words, or null",\n' +
+            '  "body_text": "short body/support line, 3–8 words, or null only if it would make the poster worse. No paragraphs.",\n' +
+            '  "offer_text": "short offer/badge copy, 1–4 words, or null. Do not invent prices, percentages, phone numbers, websites, addresses, QR codes, or exact discounts unless the user explicitly provided them.",\n' +
+            '  "cta_text": "short CTA button text, 1–3 words, or null. Use only if it fits the post goal. Examples in Hebrew: קבעו תור, דברו איתנו, לגלות עוד, לפרטים, בואו לטעום.",\n' +
+            '  "badge_text": "tiny badge/label text, 1–2 words, or null. Examples: חדש, מומלץ, השבוע, פרימיום. Do not use if it makes the poster crowded.",\n' +
+            '  "footer_text": "short footer/business line, 1–6 words, preferably real business name/category/city; null only if no real footer is available. Do not invent phone, website, address, QR code, price, or legal text.",\n' +
             '  "visual_style": "premium|bold|minimal|elegant|dramatic|luxury|friendly|energetic",\n' +
             '  "poster_type": "brand|promotion|product_spotlight|booking|seasonal|offer|announcement",\n' +
             (topic
-              ? '  "visual_direction": "English only: 2-3 sentences. The scene MUST visually depict the USER CREATIVE REQUEST above — translate it literally into the described image scene. Then add lighting and mood to match the business brand. No text or logos.",\n'
-              : '  "visual_direction": "English only: 2-3 sentences describing the hero subject, setting, lighting, and mood for an AI image generator. No text or logos.",\n') +
+              ? '  "visual_direction": "English only: 2-4 sentences. The scene MUST visually depict the USER CREATIVE REQUEST above as a premium square 1:1 Instagram/Facebook ad. Include hero subject, setting, lighting, depth, layout, branded graphic composition, and where text/CTA/badge should sit inside safe margins.",\n'
+              : '  "visual_direction": "English only: 2-4 sentences describing a premium square 1:1 Instagram/Facebook ad: hero subject, setting, lighting, depth, layout, branded graphic composition, and where text/CTA/badge should sit inside safe margins.",\n') +
             '  "image_text_mode": "Choose one: none | headline_only | headline_and_subtitle. ' +
-            'Use none ~30% of the time (clean image, no text overlay — best for luxury, elegant, minimal styles or when the visual tells the whole story). ' +
-            'Use headline_only ~40% of the time (one short punchy headline on the image). ' +
-            'Use headline_and_subtitle ~30% of the time (headline + subtitle — best for promotions, offers, bold styles). ' +
-            'Never use headline_and_subtitle for minimal/luxury visual styles unless it is a clear promotion.",\n' +
+            'For premium designed posts, strongly prefer headline_and_subtitle so the final image feels like a complete ad. ' +
+            'Use headline_only only for very minimal luxury branding. Use none only for photo mode or if text would harm readability.",\n' +
             '  "hashtags": ["5 to 10 relevant hashtags as strings, each starting with #. Mix Hebrew and English. Specific to this business type and topic. Examples for a nail salon: #ציפורניים, #מניקור, #לקג\'ל, #nails, #nailart, #פדיקור, #סלון. Do NOT use overly generic tags like #business or #marketing."]\n' +
             '}',
         },
@@ -3347,12 +1835,42 @@ async function generateMarketingBrief(
       String(subtitleRaw).toLowerCase() !== 'null'
         ? cleanPosterText(subtitleRaw, 80) || null
         : null;
+    const bodyText =
+      parsed.body_text &&
+      String(parsed.body_text).trim() &&
+      String(parsed.body_text).toLowerCase() !== 'null'
+        ? cleanPosterText(parsed.body_text, 72) || null
+        : fallback.bodyText;
+    const offerText =
+      parsed.offer_text &&
+      String(parsed.offer_text).trim() &&
+      String(parsed.offer_text).toLowerCase() !== 'null'
+        ? cleanPosterText(parsed.offer_text, 44) || null
+        : fallback.offerText;
+    const ctaText =
+      parsed.cta_text &&
+      String(parsed.cta_text).trim() &&
+      String(parsed.cta_text).toLowerCase() !== 'null'
+        ? cleanPosterText(parsed.cta_text, 34) || null
+        : fallback.ctaText;
+    const badgeText =
+      parsed.badge_text &&
+      String(parsed.badge_text).trim() &&
+      String(parsed.badge_text).toLowerCase() !== 'null'
+        ? cleanPosterText(parsed.badge_text, 24) || null
+        : fallback.badgeText;
+    const footerText =
+      parsed.footer_text &&
+      String(parsed.footer_text).trim() &&
+      String(parsed.footer_text).toLowerCase() !== 'null'
+        ? cleanPosterText(parsed.footer_text, 48) || null
+        : fallback.footerText;
 
     const rawImageTextMode = String(parsed.image_text_mode ?? '').trim().toLowerCase();
     const imageTextMode: ImageTextMode =
       rawImageTextMode === 'none' ? 'none' :
       rawImageTextMode === 'headline_and_subtitle' ? 'headline_and_subtitle' :
-      'headline_only';
+      'headline_and_subtitle';
 
     const rawHashtags = parsed.hashtags;
     const hashtags: string[] = Array.isArray(rawHashtags)
@@ -3366,6 +1884,11 @@ async function generateMarketingBrief(
       caption: cleanCaptionText(parsed.caption, 950) || fallback.caption,
       headline,
       subtitle,
+      bodyText,
+      offerText,
+      ctaText,
+      badgeText,
+      footerText,
       visualStyle: normalizeVisualStyle(parsed.visual_style, 'premium'),
       posterType: normalizePosterType(parsed.poster_type, 'brand'),
       visualDirection:
@@ -3417,6 +1940,36 @@ type HebrewRefinementResult = {
   qualityScore: number; // 0–10; <6 triggers a warning but still uses refined
 };
 
+function getMaxPosterTextElements(postImageType: PostImageType): number {
+  if (postImageType === 'premium_ad') return 9;
+  if (postImageType === 'designed') return 5;
+  return 0;
+}
+
+function preserveOriginalPosterElements(
+  refinedElements: TextElement[],
+  originalElements: TextElement[],
+  maxElements: number,
+): TextElement[] {
+  if (maxElements <= 0) return [];
+
+  const merged: TextElement[] = [];
+  const addIfNew = (element: TextElement) => {
+    const exists = merged.some(
+      (candidate) =>
+        candidate.role === element.role &&
+        candidate.text.trim() === element.text.trim(),
+    );
+    if (!exists && element.text.trim() && merged.length < maxElements) {
+      merged.push(element);
+    }
+  };
+
+  refinedElements.forEach(addIfNew);
+  originalElements.forEach(addIfNew);
+  return merged.slice(0, maxElements);
+}
+
 type HebrewMarketingPolishResult = {
   captionText: string;
   textElements: TextElement[];
@@ -3434,119 +1987,6 @@ function cleanCaptionText(value: unknown, maxLength = 950): string {
     .slice(0, maxLength);
 }
 
-async function polishHebrewMarketingCopy(
-  openai: OpenAI,
-  {
-    profile,
-    postGoal,
-    captionText,
-    textElements,
-  }: {
-    profile: NonNullable<BusinessProfile>;
-    postGoal: PostGoal;
-    captionText: string;
-    textElements: TextElement[];
-  },
-  acc: CostAccumulator,
-): Promise<HebrewMarketingPolishResult> {
-  const hasHebrew = /[֐-׿]/.test(
-    `${captionText} ${textElements.map((element) => element.text).join(' ')}`,
-  );
-  const fallback: HebrewMarketingPolishResult = {
-    captionText: cleanCaptionText(captionText) || captionText,
-    textElements,
-    qualityScore: hasHebrew ? 7 : 10,
-    notes: hasHebrew ? 'fallback_original_copy' : 'no_hebrew_to_polish',
-  };
-
-  if (!hasHebrew) return fallback;
-
-  try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      response_format: { type: 'json_object' },
-      max_tokens: 850,
-      temperature: 0.3,
-      messages: [
-        {
-          role: 'system',
-          content:
-            'אתה קופירייטר ישראלי בכיר לסושיאל מדיה, מומחה בשיווק עברי לעסקים קטנים. ' +
-            'אתה יוצר עברית שיווקית קצרה, טבעית, ישראלית — כמו שמנהל/ת סושיאל מנוסה היה כותב/ת. ' +
-            'אתה לא מתרגם מאנגלית. אתה לא כותב פואטיקה. אתה כותב ישיר, ברור, ואנושי. ' +
-            'החזר JSON בלבד.',
-        },
-        {
-          role: 'user',
-          content:
-            'כתוב/י קופי שיווקי עברי לפוסטר ולכיתוב על בסיס הטיוטה הבאה.\n\n' +
-            `שם העסק: ${profile.businessName ?? ''}\n` +
-            `סוג העסק: ${profile.businessType ?? ''}\n` +
-            `קהל יעד: ${profile.audience ?? profile.targetAudience ?? ''}\n` +
-            `טון/סגנון: ${profile.tone ?? profile.style ?? profile.websiteTone ?? ''}\n` +
-            `מטרה: ${postGoal}\n\n` +
-            `כיתוב נוכחי:\n${captionText}\n\n` +
-            `טקסטים לפוסטר:\n${JSON.stringify(textElements)}\n\n` +
-            '━━━ כללים לטקסטים של הפוסטר (חשוב מאוד) ━━━\n' +
-            '• מקסימום 3 אלמנטים בסך הכל (כולל brand_name)\n' +
-            '• כל אלמנט: 2 עד 5 מילים בלבד. לא יותר.\n' +
-            '• עברית ישראלית טבעית — לא תרגום מאנגלית, לא ניסוחים פורמליים\n' +
-            '• בלי משפטים ארוכים, בלי כתיבה פואטית, בלי שאלות מרגישות\n' +
-            '• דוגמאות טובות: "מתחילים חזק", "תוצאה שרואים", "אימון שמתאים בדיוק אליך"\n' +
-            '• דוגמאות גרועות: "גלה את הדרך לאורח חיים בריא ומאוזן", "הצטרפו למהפכה התזונתית שלנו"\n' +
-            '• CTA רק אם מתאים. אפשרויות טבעיות: "קבעו תור", "דברו איתנו", "לפרטים", "בואו לטעום"\n' +
-            '• אל תמציא מחירים, הנחות, פרטים שלא הופיעו\n' +
-            '• שמות מותג באנגלית — השאר בדיוק כפי שהם\n\n' +
-            '━━━ כללים לכיתוב הסושיאל ━━━\n' +
-            '• 2-5 שורות קצרות, מתאים לאינסטגרם/פייסבוק\n' +
-            '• אפשר אימוג׳ים במידה, לא להגזים בהאשטגים\n\n' +
-            'החזר JSON במבנה הזה בלבד:\n' +
-            '{ "caption_he": "כיתוב מלוטש", "text_elements": [{"role":"headline|subheadline|offer|cta|brand_name","text":"...","importance":"primary|secondary|small"}], "quality_score": 0-10, "notes": "קצר" }',
-        },
-      ],
-    });
-
-    trackTextCost(acc, 'hebrew_polish', 'gpt-4o-mini', response.usage);
-
-    const parsed = parseJsonObject(response.choices[0]?.message?.content?.trim() ?? '');
-    if (!parsed) {
-      devWarn('[HebrewPolish] non-JSON response, using original copy');
-      return fallback;
-    }
-
-    const polishedCaption = cleanCaptionText(parsed.caption_he, 950) || fallback.captionText;
-    const polishedElements = textElements.length
-      ? normalizeTextElements(parsed.text_elements, textElements).slice(0, 3)
-      : [];
-    const qualityScore =
-      typeof parsed.quality_score === 'number'
-        ? Math.max(0, Math.min(10, Math.round(parsed.quality_score)))
-        : 8;
-    const notes = String(parsed.notes ?? '').trim().slice(0, 180) || 'polished';
-
-    devInfo('[HebrewPolish] copy polished', {
-      postGoal,
-      originalCaptionLength: captionText.length,
-      polishedCaptionLength: polishedCaption.length,
-      originalElementCount: textElements.length,
-      polishedElementCount: polishedElements.length,
-      qualityScore,
-      notes,
-    });
-
-    return {
-      captionText: polishedCaption,
-      textElements: polishedElements,
-      qualityScore,
-      notes,
-    };
-  } catch (error) {
-    devWarn('[HebrewPolish] threw, using original copy', {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return fallback;
-  }
-}
 
 // Step 2 of the Hebrew copy pipeline — critical editor pass.
 // Runs inside Quality Boost after polishHebrewMarketingCopy (Step 1).
@@ -3554,10 +1994,14 @@ async function polishHebrewMarketingCopy(
 async function refineAndValidateHebrewCopy(
   openai: OpenAI,
   textElements: TextElement[],
+  maxTextElements: number,
   acc: CostAccumulator,
 ): Promise<HebrewRefinementResult> {
   const hebrewCharPattern = /[֐-׿]/;
-  const fallback: HebrewRefinementResult = { refinedElements: textElements, qualityScore: 7 };
+  const fallback: HebrewRefinementResult = {
+    refinedElements: textElements.slice(0, maxTextElements),
+    qualityScore: 7,
+  };
 
   const hebrewElements = textElements.filter((el) => hebrewCharPattern.test(el.text));
   if (hebrewElements.length === 0) return fallback;
@@ -3570,7 +2014,7 @@ async function refineAndValidateHebrewCopy(
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       response_format: { type: 'json_object' },
-      max_tokens: 400,
+      max_tokens: maxTextElements >= 9 ? 750 : 450,
       temperature: 0.2,
       messages: [
         {
@@ -3592,13 +2036,18 @@ async function refineAndValidateHebrewCopy(
             '✗ ניסוחים מוזרים או שנשמעים מתורגמים מאנגלית\n' +
             '✗ שפה רובוטית ופורמלית מדי (כמו "גלה את הפתרון המושלם שלך")\n' +
             '✗ CTA לא טבעי (כמו "הזמינו עכשיו" — אלא אם זה ממש מתאים)\n' +
-            '✗ שורות ארוכות מ-5 מילים — קצר אותן\n' +
-            '✗ יותר מ-3 אלמנטים — מחק עודפים\n\n' +
+            (maxTextElements >= 9
+              ? '✗ שורות ארוכות מדי — קצר אותן, אבל אל תמחק אזורי טקסט שימושיים כמו תת-כותרת, תגית, CTA או פוטר\n'
+              : '✗ שורות ארוכות מ-5 מילים — קצר אותן\n') +
+            (maxTextElements >= 9
+              ? 'לפוסטר פרימיום: אל תמחק אלמנטים שימושיים רק כדי לצמצם. שמור על מבנה פוסטר מלא וטבעי: כותרת, תת-כותרת, שורת תמיכה, הצעה/תגית, CTA, שם עסק ושורת פוטר — כל אחד קצר מאוד. מחק רק כפילויות, שורות ארוכות מדי או ניסוחים חלשים.\n'
+              : 'למצב מעוצב קל שמור רק את האלמנטים הכי חשובים, בלי עומס.\n') +
+            '\n' +
             'דוגמאות לעברית טובה בפוסטר: "מתחילים חזק", "תוצאה שרואים", "הגיע הזמן להשקיע בעצמך", "קבעו אימון ניסיון", "תזונה. כוח. תוצאות."\n' +
             'דוגמאות לעברית גרועה: "גלה את הדרך לאורח חיים בריא", "הצטרפו למהפכה שלנו", "חוו חוויה מדהימה"\n\n' +
             'שמות מותג באנגלית — השאר בדיוק כפי שהם.\n\n' +
             'החזר JSON:\n' +
-            '{ "refined_elements": [{"role":"...","text":"...","importance":"..."}], ' +
+            '{ "refined_elements": [{"role":"headline|subheadline|body|offer|badge|cta|footer|brand_name","text":"...","importance":"primary|secondary|small"}], ' +
             '"quality_score": <0-10>, "issues_found": "תיאור קצר או ריק" }',
         },
       ],
@@ -3626,10 +2075,13 @@ async function refineAndValidateHebrewCopy(
 
     const refinedElements =
       Array.isArray(parsed.refined_elements) && parsed.refined_elements.length > 0
-        ? normalizeTextElements(parsed.refined_elements, textElements)
+        ? normalizeTextElements(parsed.refined_elements, textElements, maxTextElements)
         : textElements;
 
-    const capped = refinedElements.slice(0, 3);
+    const capped =
+      maxTextElements >= 9
+        ? preserveOriginalPosterElements(refinedElements, textElements, maxTextElements)
+        : refinedElements.slice(0, maxTextElements);
 
     devInfo('[HebrewEditor] ✅ Step 2 complete', {
       originalCount: textElements.length,
@@ -3653,7 +2105,7 @@ async function refineAndValidateHebrewCopy(
 
 // Builds the final Hebrew text instruction appended to each candidate's prompt.
 // These words were written by a copywriter (Step 1) and reviewed by an editor
-// (Step 2). The image model must use ONLY these words — no invention allowed.
+// (Step 2). The image model should use them as the primary poster copy plan.
 function buildHebrewTextOverride(approvedElements: TextElement[]): string {
   if (approvedElements.length === 0) return '';
   const lines = approvedElements
@@ -3661,18 +2113,18 @@ function buildHebrewTextOverride(approvedElements: TextElement[]): string {
     .join('\n');
   return (
     '\n\n' +
-    '══════════ FINAL APPROVED HEBREW TEXT — DO NOT DEVIATE ══════════\n' +
+    '══════════ APPROVED HEBREW POSTER COPY PLAN ══════════\n' +
     'Professional Israeli copywriters reviewed and approved these exact words.\n' +
-    'Render ONLY the following Hebrew text inside the poster — nothing else:\n\n' +
+    'Use the following approved poster text as the complete source copy plan. Render these elements as separate designed areas when the layout calls for it — do not collapse them into one headline and do not omit most of them:\n\n' +
     lines + '\n\n' +
     'ABSOLUTE RULES for Hebrew text in this poster:\n' +
-    '1. Use ONLY the Hebrew words listed above — these are the final, approved words.\n' +
-    '2. Do NOT invent, add, or improvise any Hebrew text of your own.\n' +
-    '3. Do NOT render any Hebrew characters that are not in the approved list above.\n' +
-    '4. Do NOT translate these words or add English alongside them.\n' +
+    '1. Use the approved text elements above as the primary poster copy plan — these are the final, approved marketing messages.\n' +
+    '2. Do NOT invent factual details: no fake phone number, website, address, price, discount, QR code, legal text, or contact details.\n' +
+    '3. If you add tiny generic design labels for visual balance, they must be very short, natural Hebrew, and secondary to the approved text.\n' +
+    '4. Do NOT translate these words. English is allowed ONLY for an approved brand_name that is already written in English in the list above.\n' +
     '5. If a word looks short — that is intentional. Keep it exactly as written.\n' +
-    '6. CRITICAL — PURE HEBREW ONLY: Every character in every Hebrew word must be a real Hebrew letter (Unicode block U+05D0–U+05EA). ' +
-    'ZERO Latin or English letters are allowed inside or attached to Hebrew words. ' +
+    '6. CRITICAL — PURE HEBREW WORDS: Every character in every Hebrew word must be a real Hebrew letter (Unicode block U+05D0–U+05EA). ' +
+    'ZERO Latin or English letters are allowed inside or attached to Hebrew words. English letters are allowed only in an approved English brand_name element. ' +
     'Do NOT replace any Hebrew letter with a visually similar Latin character — for example: ' +
     'never use "Y" instead of "י" or "ל", never use "O" instead of "ו" or "ס", never use "1" instead of "ו", ' +
     'never use "X" instead of any Hebrew letter. Each word must be rendered using only authentic Hebrew glyphs.\n' +
@@ -3692,19 +2144,223 @@ const ANTI_AI_GUARD =
   'no plastic flawless CGI skin, no sterile empty backgrounds, no impossible perfection. ' +
   'Embrace asymmetry, natural imperfections, lived-in environments, documentary realness for photographic parts. ';
 
-// Deployment sentinel. If this string is NOT in your Convex logs when you
-// generate a post, your Convex deployment is running an older build of this
-// file and you must redeploy (`npx convex deploy` or restart `npx convex dev`).
-const IMAGE_PIPELINE_VERSION = 'openai-gpt-image-2-single-2026-06-02';
+// Deployment sentinel. If this exact string is NOT in your Convex logs when
+// you generate a post, your Convex deployment is running an older build of
+// this file. Redeploy via `npx convex deploy` (or restart `npx convex dev`).
+const IMAGE_PIPELINE_VERSION = 'clean-premium-ad-rebuild-2026-06-22';
 
-// Module-load log: fires once per cold start.
-devInfo('[generatePost] module loaded', {
+// Module-load sentinel — UNCONDITIONAL (uses console.info directly, NOT gated
+// by ENABLE_DEV_GENERATION_LOGS). Fires once per Convex action cold start.
+// If this line is missing from Convex logs the deployment is stale.
+console.info('[generatePost] MODULE LOADED', {
   IMAGE_PIPELINE_VERSION,
-  imageModel: 'gpt-image-2',
+  defaultImageModel: 'gpt-image-2',
+  cleanPremiumAdPipelineActive: true,
   convexCloudUrl: process.env.CONVEX_CLOUD_URL ?? null,
   convexSiteUrl: process.env.CONVEX_SITE_URL ?? null,
   hasOpenAiApiKeyAtBoot: Boolean(process.env.OPENAI_API_KEY),
+  // Snapshot of env overrides at boot (names + present/absent only — no values)
+  envOverrides: {
+    OPENAI_IMAGE_MODEL_set: Boolean(process.env.OPENAI_IMAGE_MODEL?.trim()),
+    OPENAI_IMAGE_MODEL_value: process.env.OPENAI_IMAGE_MODEL?.trim() || null,
+    OPENAI_POSTER_LANGUAGE_MODE_set: Boolean(process.env.OPENAI_POSTER_LANGUAGE_MODE?.trim()),
+    OPENAI_POSTER_LANGUAGE_MODE_value: process.env.OPENAI_POSTER_LANGUAGE_MODE?.trim() || null,
+    NODE_ENV: process.env.NODE_ENV ?? null,
+    EASY_M_RUNTIME_ENV: process.env.EASY_M_RUNTIME_ENV ?? null,
+    EASY_M_DEV_GENERATION_LOGS: process.env.EASY_M_DEV_GENERATION_LOGS ?? null,
+  },
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLEAN PREMIUM_AD PIPELINE
+// ─────────────────────────────────────────────────────────────────────────────
+// Fresh, minimal rewrite that REPLACES the entire premium_ad path. Replaces
+// (does not chain onto) the previous multi-stage flow that combined: marketing
+// brief → Hebrew polish pass → Hebrew editor pass → approved text elements list
+// → buildSimpleImagePrompt → hebrewOverride block → images.edit with logo +
+// style-reference PNGs. All of that machinery is bypassed here.
+//
+// Two API calls only:
+//   1. gpt-4o-mini → returns { caption_hebrew, hashtags, image_prompt }.
+//      The image_prompt is ONE focused English paragraph that already inlines
+//      every Hebrew text string the poster should show. No second polish step.
+//   2. openai.images.generate → renders the final poster from that prompt.
+//      No logo PNG or style PNG is attached, so the model is not image-
+//      conditioning-biased and follows the layout instructions directly.
+// The image returned from step 2 is the final poster (compositionStrategy =
+// 'complete_image'); the app does not draw any overlay on top.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type CleanPremiumAdBrief = {
+  caption: string;
+  hashtags: string[];
+  imagePrompt: string;
+};
+
+function buildFallbackCleanImagePrompt(profile: NonNullable<BusinessProfile>): string {
+  const name = profile.businessName?.trim() || 'בית עסק';
+  const type = profile.businessType?.trim() || 'עסק מקומי';
+  return (
+    'Premium Israeli Instagram sponsored advertisement, square 1:1, professional agency-quality design. ' +
+    `Split-layout: a polished commercial photograph of a ${type} on the right 55%, and a dark gradient text panel on the left 45%. ` +
+    `Inside the dark panel: a small uppercase brand mark "${name}" at the top with letter-spacing; ` +
+    'a large bold Hebrew headline "בדיוק בשבילכם" in pure white with subtle purple glow; ' +
+    'a thin purple ornamental divider line with a center diamond; ' +
+    'a smaller Hebrew subheadline "שירות מקצועי" in light purple; ' +
+    `a small Hebrew body line "${type}" in light gray; ` +
+    'a floating circular gradient purple offer badge with "מומלץ" in bold white, slightly rotated; ' +
+    'a full-width gradient purple CTA pill at the bottom with "לפרטים" in bold white; ' +
+    'a tiny Hebrew footer line with the business category. ' +
+    'Premium palette: deep black with electric purple (#7C3AED → #a78bfa) accents. ' +
+    'Subtle glowing purple frame around the whole poster. Real Hebrew letters, strict right-to-left order. ' +
+    'No duplicated text, no fake prices, no fake phone numbers, no QR codes. ' +
+    'Square 1:1, premium agency quality, photorealistic hero, polished typography.'
+  );
+}
+
+async function generateCleanPremiumAdBrief(
+  openai: OpenAI,
+  profile: NonNullable<BusinessProfile>,
+  topic: string,
+  assetInsight: BrandAssetInsight | null,
+  recentPostSummaries: string[],
+  acc: CostAccumulator,
+): Promise<CleanPremiumAdBrief> {
+  const businessName = profile.businessName?.trim() ?? '';
+  const businessType = profile.businessType ?? '';
+  const services = dedupe([
+    profile.services ?? '',
+    ...(profile.websiteServices ?? []),
+    ...(assetInsight?.productHints ?? []),
+  ])
+    .filter(Boolean)
+    .slice(0, 6)
+    .join(', ');
+  const audience = (profile.audience ?? profile.targetAudience ?? '').trim();
+  const tone = (profile.tone ?? profile.style ?? profile.websiteTone ?? '').trim();
+  const brandColors = (profile.brandColors ?? '').trim();
+  const description = [profile.description, profile.websiteSummary]
+    .map((s) => (s ?? '').trim())
+    .filter(Boolean)
+    .join(' ')
+    .slice(0, 260);
+  const assetCues = assetInsight
+    ? [
+        assetInsight.visualStyleSummary,
+        assetInsight.productHints.length
+          ? `seen in photos: ${assetInsight.productHints.join(', ')}`
+          : '',
+        assetInsight.atmosphereHints?.length
+          ? `atmosphere: ${assetInsight.atmosphereHints.join(', ')}`
+          : '',
+        assetInsight.lightingHints?.length
+          ? `lighting: ${assetInsight.lightingHints.join(', ')}`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('. ')
+        .slice(0, 280)
+    : '';
+  const recentLine = recentPostSummaries.length
+    ? recentPostSummaries.slice(0, 3).join(' | ')
+    : '';
+
+  const fallback: CleanPremiumAdBrief = {
+    caption: `${businessName} — ${services || businessType}`.trim(),
+    hashtags: [],
+    imagePrompt: buildFallbackCleanImagePrompt(profile),
+  };
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      response_format: { type: 'json_object' },
+      temperature: 0.75,
+      max_tokens: 950,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are a senior Israeli creative director composing ONE focused image-generation prompt for a complete designed social media advertisement. The prompt is sent to OpenAI\'s image model and must produce a finished agency-grade poster with multiple text zones — never a photo with one headline. Return JSON only.',
+        },
+        {
+          role: 'user',
+          content:
+            'BUSINESS\n' +
+            `Name: ${businessName || 'unnamed business'}\n` +
+            `Type: ${businessType || 'local business'}\n` +
+            (description ? `About: ${description}\n` : '') +
+            (services ? `Services/products: ${services}\n` : '') +
+            (audience ? `Audience: ${audience}\n` : '') +
+            (tone ? `Mood/tone: ${tone}\n` : '') +
+            (brandColors ? `Brand colors: ${brandColors}\n` : '') +
+            (profile.city ? `City: ${profile.city}\n` : '') +
+            `Topic for this post: ${topic.trim() || 'choose the strongest angle for this business'}\n` +
+            (assetCues ? `Cues from uploaded business photos: ${assetCues}\n` : '') +
+            (recentLine ? `Avoid repeating recent posts: ${recentLine}\n` : '') +
+            '\n' +
+            'RETURN JSON ONLY with this exact shape:\n' +
+            '{\n' +
+            '  "caption_hebrew": "2-5 short lines of authentic Israeli Hebrew Instagram/Facebook caption. No hashtags inside this field.",\n' +
+            '  "hashtags": ["5-10 specific hashtags starting with #, mix Hebrew and English, no generic tags like #business"],\n' +
+            '  "image_prompt": "ONE English paragraph (900-1500 chars) describing a complete premium Israeli Instagram sponsored ad, square 1:1, with multiple text zones inside the image."\n' +
+            '}\n' +
+            '\n' +
+            'IMAGE_PROMPT REQUIREMENTS — your image_prompt MUST include:\n' +
+            '1. Split-layout poster — a polished hero photograph on ONE side (right or left), and a dark gradient text panel on the OTHER side.\n' +
+            '2. ALL Hebrew text strings inlined naturally, writing the EXACT Hebrew words inside double quotes — not placeholders. Required text zones:\n' +
+            '   a. small uppercase brand mark at the top of the dark panel reading the business name (Hebrew or English depending on the brand)\n' +
+            '   b. large bold Hebrew HEADLINE of 2-5 words in pure white with subtle purple glow\n' +
+            '   c. thin purple ornamental divider line with a center diamond\n' +
+            '   d. smaller bold Hebrew SUBHEADLINE of 2-6 words in light purple\n' +
+            '   e. small Hebrew BODY line of 3-8 words in light gray\n' +
+            '   f. floating circular gradient purple OFFER BADGE with bold short Hebrew text inside of 1-3 words, slightly rotated\n' +
+            '   g. full-width gradient purple CTA pill button at the bottom with bold short Hebrew CTA of 1-3 words in white\n' +
+            '   h. tiny Hebrew FOOTER line at the very bottom (business name or category)\n' +
+            '3. A vivid description of the hero photograph content specific to this business type.\n' +
+            '4. Color palette: deep black background with electric purple (#7C3AED → #a78bfa) accents.\n' +
+            '5. Subtle glowing purple frame around the whole poster.\n' +
+            '6. Hebrew text rules: real Hebrew letters (Unicode U+05D0–U+05EA), strict right-to-left order, no broken letters, no Latin substitutions inside Hebrew words.\n' +
+            '7. Forbid clause: duplicated text, ghost text, fake prices, fake percentages, fake phone numbers, fake URLs, fake addresses, QR codes.\n' +
+            '8. End the paragraph with the literal sentence: "Square 1:1, premium agency quality, photorealistic hero, polished typography."\n' +
+            '\n' +
+            'NEVER invent fake prices, percentages, phone numbers, URLs, addresses, or contact details. Choose short natural Israeli Hebrew copy that fits this business. The caption_hebrew should match the same campaign idea as the poster.',
+        },
+      ],
+    });
+
+    trackTextCost(acc, 'clean_premium_brief', 'gpt-4o-mini', response.usage);
+
+    const raw = response.choices?.[0]?.message?.content?.trim() ?? '';
+    const parsed = parseJsonObject(raw);
+    if (!parsed) {
+      devWarn('[CleanBrief] non-JSON response, using fallback');
+      return fallback;
+    }
+
+    const caption = cleanCaptionText(parsed.caption_hebrew, 950) || fallback.caption;
+    const hashtagsRaw = Array.isArray(parsed.hashtags) ? parsed.hashtags : [];
+    const hashtags = hashtagsRaw
+      .map((h: unknown) => String(h ?? '').trim())
+      .filter((h: string) => h.startsWith('#') && h.length > 1)
+      .slice(0, 12);
+    const imagePrompt =
+      String(parsed.image_prompt ?? '').trim().slice(0, 2400) || fallback.imagePrompt;
+
+    devInfo('[CleanBrief] generated', {
+      captionLength: caption.length,
+      hashtagCount: hashtags.length,
+      imagePromptLength: imagePrompt.length,
+    });
+
+    return { caption, hashtags, imagePrompt };
+  } catch (error) {
+    devError('🔴 [CleanBrief] gpt-4o-mini call FAILED — using fallback', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return fallback;
+  }
+}
 
 export const generateMarketingPost = action({
   args: { topic: v.string() },
@@ -3768,13 +2424,10 @@ export const generateMarketingPost = action({
       .filter(Boolean)
       .map((caption, index) => `${index + 1}. ${caption.slice(0, 140)}`);
 
-    const businessContext = buildBusinessContext(profile);
-    const visualContext   = buildEnglishVisualContext(profile);
-    const businessIdentity = buildBusinessIdentitySummary(profile);
-    // Industry detection — falls back to website-scan corpus if businessType
-    // is unset, so a sushi shop with no businessType but a scanned site still
-    // gets the sushi visual mandate.
-    const styleByType     = resolveBusinessStyle(profile);
+    // Industry detection — used by the legacy designed/photo `buildSimpleImagePrompt`
+    // to pick industry-specific lens/composition. Falls back to website-scan
+    // corpus if businessType is unset.
+    const styleByType = resolveBusinessStyle(profile);
     const cleanTopic      = topic.trim();
     const hasUserTopic    = cleanTopic.length > 0;
 
@@ -3782,6 +2435,173 @@ export const generateMarketingPost = action({
       hasUserTopic,
       topicLength: cleanTopic.length,
     });
+
+    const rawPostImageType = profile.postImageType;
+    const postImageType: PostImageType = rawPostImageType ?? 'premium_ad';
+
+    // UNCONDITIONAL ROUTING SENTINEL — proves which path is running, what
+    // postImageType is active, and whether any env override is in effect.
+    // Always uses console.info so it survives without dev-log env vars.
+    const _authIdentityVerify = await ctx.auth.getUserIdentity();
+    console.info('[generatePost] 🛣 ROUTING DECISION', {
+      IMAGE_PIPELINE_VERSION,
+      rawProfilePostImageType: rawPostImageType ?? null,
+      effectivePostImageType: postImageType,
+      willUseCleanPremiumAdPipeline: postImageType === 'premium_ad',
+      hasBusinessProfile: Boolean(profile),
+      businessNamePresent: Boolean(profile?.businessName),
+      businessType: profile?.businessType ?? null,
+      hasLogoUrl: Boolean(profile?.logoUrl),
+      userIdSubjectPrefix: (_authIdentityVerify?.subject ?? '').slice(0, 8) || null,
+      topicLength: cleanTopic.length,
+      activeEnvOverrides: {
+        OPENAI_IMAGE_MODEL: process.env.OPENAI_IMAGE_MODEL?.trim() || null,
+        OPENAI_POSTER_LANGUAGE_MODE: process.env.OPENAI_POSTER_LANGUAGE_MODE?.trim() || null,
+      },
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CLEAN PREMIUM_AD PIPELINE — early return.
+    // Bypasses the legacy machinery (marketing brief → Hebrew polish → Hebrew
+    // editor → approved-text-elements list → buildSimpleImagePrompt → hebrew
+    // override block → images.edit with logo + style PNGs). Two API calls only:
+    // one gpt-4o-mini for the brief, one openai.images.generate for the poster.
+    // ─────────────────────────────────────────────────────────────────────────
+    if (postImageType === 'premium_ad') {
+      console.info('[generatePost] 🧼 ENTERING CLEAN premium_ad PIPELINE', {
+        IMAGE_PIPELINE_VERSION,
+      });
+      devInfo('🧼 [generateMarketingPost] CLEAN premium_ad pipeline');
+
+      const tAssetsClean = Date.now();
+      const assetInsightClean = await analyzeBrandAssets(openai, profile, costAcc);
+      devInfo('⏱ [timing] brand asset analysis', { ms: Date.now() - tAssetsClean });
+
+      const tBriefClean = Date.now();
+      const cleanBrief = await generateCleanPremiumAdBrief(
+        openai,
+        profile,
+        cleanTopic,
+        assetInsightClean,
+        recentPostSummaries,
+        costAcc,
+      );
+      devInfo('⏱ [timing] clean brief', { ms: Date.now() - tBriefClean });
+
+      let cleanCaptionText = cleanBrief.caption;
+      if (cleanBrief.hashtags.length) {
+        cleanCaptionText += '\n\n' + cleanBrief.hashtags.join(' ');
+      }
+
+      // UNCONDITIONAL PRE-IMAGE-CALL SENTINEL — confirms which model & endpoint
+      // will actually be hit, whether any image inputs are attached (must both
+      // be null in clean pipeline → forces images.generate), and what prompt
+      // was built. First 300 chars of the prompt only; no secrets.
+      const _configuredModelClean = process.env.OPENAI_IMAGE_MODEL?.trim();
+      const _activeModelClean = _configuredModelClean || BEST_OPENAI_IMAGE_MODEL;
+      console.info('[generatePost] 🖼 PRE-IMAGE-CALL (clean premium_ad)', {
+        IMAGE_PIPELINE_VERSION,
+        activeImageModel: _activeModelClean,
+        defaultImageModel: BEST_OPENAI_IMAGE_MODEL,
+        usingModelOverride:
+          Boolean(_configuredModelClean) && _configuredModelClean !== BEST_OPENAI_IMAGE_MODEL,
+        endpointWillBe: 'images.generate',
+        logoFileIsNull: true,
+        styleReferenceFileIsNull: true,
+        imagePromptLength: cleanBrief.imagePrompt.length,
+        imagePromptPreviewFirst300: cleanBrief.imagePrompt.slice(0, 300),
+        captionLength: cleanCaptionText.length,
+        hashtagCount: cleanBrief.hashtags.length,
+      });
+
+      devInfo('🖼 [CLEAN premium_ad] image request', {
+        promptLength: cleanBrief.imagePrompt.length,
+        defaultModel: BEST_OPENAI_IMAGE_MODEL,
+        configuredModel: process.env.OPENAI_IMAGE_MODEL?.trim() || null,
+      });
+
+      const tImageClean = Date.now();
+      const cleanImageBase64 = await generateImageWithOpenAI({
+        openai,
+        prompt: cleanBrief.imagePrompt,
+        role: 'complete_poster',
+        languageMode: 'hebrew',
+        logoFile: null,
+        styleReferenceFile: null,
+        acc: costAcc,
+      });
+      devInfo('⏱ [timing] image generation', { ms: Date.now() - tImageClean });
+
+      const cleanTotalMs = Date.now() - handlerStartedAt;
+
+      // Cost summary + persist + counter increment (same shape as legacy path)
+      const cleanCostSummary = summarizeCosts(costAcc);
+      devInfo('💰 [CLEAN premium_ad] cost breakdown', {
+        textModels: cleanCostSummary.textModels,
+        imageModels: cleanCostSummary.imageModels,
+        textInputTokens: cleanCostSummary.totalTextInputTokens,
+        textOutputTokens: cleanCostSummary.totalTextOutputTokens,
+        estimatedTextUsd: cleanCostSummary.totalTextUsd.toFixed(6),
+        estimatedImageUsd: cleanCostSummary.totalImageUsd.toFixed(6),
+        estimatedTotalUsd: cleanCostSummary.totalUsd.toFixed(6),
+        totalGenerationMs: cleanTotalMs,
+      });
+
+      const cleanAuthIdentity = await ctx.auth.getUserIdentity();
+      const cleanCostUserId = cleanAuthIdentity?.subject ?? 'unknown';
+      await ctx.runMutation(internal.generationCosts.saveGenerationCost, {
+        userId: cleanCostUserId,
+        estimatedTotalUsd: cleanCostSummary.totalUsd,
+        estimatedTextUsd: cleanCostSummary.totalTextUsd,
+        estimatedImageUsd: cleanCostSummary.totalImageUsd,
+        textInputTokens: cleanCostSummary.totalTextInputTokens,
+        textOutputTokens: cleanCostSummary.totalTextOutputTokens,
+        textModels: cleanCostSummary.textModels,
+        imageModels: cleanCostSummary.imageModels,
+        qualityBoostEnabled: false,
+        postImageType,
+        totalGenerationMs: cleanTotalMs,
+      });
+      await ctx.runMutation(api.users.incrementPostsGenerated);
+
+      devInfo('✅ [CLEAN premium_ad] SUCCESS', {
+        hasImage: Boolean(cleanImageBase64),
+        captionLength: cleanCaptionText.length,
+        totalGenerationMs: cleanTotalMs,
+      });
+
+      // UNCONDITIONAL RETURN-SHAPE SENTINEL — confirms what the client receives.
+      console.info('[generatePost] ✅ CLEAN premium_ad RETURNING', {
+        IMAGE_PIPELINE_VERSION,
+        postImageType,
+        compositionStrategy: 'complete_image',
+        hasImage: Boolean(cleanImageBase64),
+        imageBase64Length: cleanImageBase64 ? cleanImageBase64.length : 0,
+        captionLength: cleanCaptionText.length,
+        totalGenerationMs: cleanTotalMs,
+        posterTextIsNull: true,
+      });
+
+      return {
+        captionText: cleanCaptionText,
+        imageBase64: cleanImageBase64 ?? '',
+        postImageType,
+        posterText: null,
+        posterTemplate: null,
+        posterLayout: null,
+        creativeTemplate: null,
+        visualStyle: null,
+        imageProvider: 'openai' as const,
+        generatedImageUrl: null,
+        compositionStrategy: 'complete_image' as const,
+      };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // LEGACY PATH — designed / photo only. Kept verbatim for backward
+    // compatibility with saved posts and the small set of users on
+    // non-default postImageType. Not exercised by premium_ad anymore.
+    // ─────────────────────────────────────────────────────────────────────────
     // Start logo fetch in background — will be awaited later, parallel with text generation
     const logoPromise = fetchLogoAsUploadable(profile.logoUrl);
 
@@ -3790,22 +2610,24 @@ export const generateMarketingPost = action({
     const tAssets = Date.now();
     const assetInsight    = await analyzeBrandAssets(openai, profile, costAcc);
     devInfo('⏱ [timing] brand asset analysis', { ms: Date.now() - tAssets });
-    const rawPostImageType = profile.postImageType;
-    const postImageType: PostImageType = rawPostImageType ?? 'premium_ad';
     const posterLanguageMode = resolvePosterLanguageMode();
     // ── PROFILE / ROUTING DIAGNOSTIC ─────────────────────────────────────────
     // Convex actions read environment variables from the Convex deployment env.
     // Local .env files do NOT propagate to the Convex cloud — they only feed
     // Expo at build time.
+    const _configuredImageModelDiag = process.env.OPENAI_IMAGE_MODEL?.trim();
     devInfo('🔎 [generateMarketingPost] routing decision', {
       IMAGE_PIPELINE_VERSION,
       rawProfilePostImageType: rawPostImageType ?? null,
       effectivePostImageType: postImageType,
       willUseProvider: 'openai',
       posterLanguageMode,
-      primaryImageModel: BEST_OPENAI_IMAGE_MODEL,
-      configuredImageModel: process.env.OPENAI_IMAGE_MODEL?.trim() || null,
-      imageModelPolicy: 'use_best_openai_image_model_only',
+      defaultImageModel: BEST_OPENAI_IMAGE_MODEL,
+      configuredImageModel: _configuredImageModelDiag || null,
+      activeImageModel: _configuredImageModelDiag || BEST_OPENAI_IMAGE_MODEL,
+      imageModelPolicy: _configuredImageModelDiag
+        ? 'use_OPENAI_IMAGE_MODEL_override'
+        : 'use_default_image_model',
       hasOpenAiApiKey: Boolean(apiKey),
       readFrom: 'process.env (Convex deployment env)',
     });
@@ -3901,37 +2723,56 @@ export const generateMarketingPost = action({
       brief.hashtags.length > 0 ? '\n\n' + brief.hashtags.join(' ') : '';
     let captionText = brief.caption + hashtagSuffix;
 
-    // Build posterText respecting image_text_mode
+    // Legacy designed/photo only — premium_ad short-circuits earlier.
+    const effectiveImageTextMode: ImageTextMode =
+      postImageType === 'photo'
+        ? 'none'
+        : brief.imageTextMode === 'none'
+          ? 'headline_and_subtitle'
+          : brief.imageTextMode;
+    const maxPosterTextElements = getMaxPosterTextElements(postImageType);
+    const approvedPosterTextElements = textElementsFromMarketingBrief(
+      brief,
+      profile,
+      effectiveImageTextMode,
+      maxPosterTextElements,
+    );
+
+    // Build posterText with ALL approved copy slots from the marketing brief.
+    // Returned to the client as preview/metadata. Photo mode is null.
     const posterText: PosterText | null =
-      brief.imageTextMode === 'none'
+      effectiveImageTextMode === 'none'
         ? null
         : {
             headline: brief.headline,
-            ...(brief.imageTextMode === 'headline_and_subtitle' && brief.subtitle
-              ? { subtitle: brief.subtitle }
-              : {}),
+            ...(brief.subtitle ? { subtitle: brief.subtitle } : {}),
+            ...(brief.bodyText ? { body: brief.bodyText } : {}),
+            ...(brief.ctaText ? { cta: brief.ctaText } : {}),
+            ...(brief.offerText ? { offer: brief.offerText } : {}),
+            ...(brief.badgeText ? { badge: brief.badgeText } : {}),
+            ...(brief.footerText ? { footer: brief.footerText } : {}),
           };
 
     // ── 2. Hebrew editor pass + logo fetch in parallel ───────────────────────
+    // OpenAI Image renders the full poster including the Hebrew text. The
+    // editor pass polishes the approved copy and the override block locks
+    // the exact Hebrew strings the model should render. Runs for both
+    // premium_ad and designed (anything that puts Hebrew INTO the image).
     let hebrewOverride = '';
-    if (brief.languageMode === 'hebrew') {
-      // Only pass elements that will actually appear on the image
-      const hebrewElements: TextElement[] =
-        brief.imageTextMode === 'none'
-          ? []
-          : [
-              { role: 'headline', text: brief.headline, importance: 'primary' },
-              ...(brief.imageTextMode === 'headline_and_subtitle' && brief.subtitle
-                ? [{ role: 'subheadline' as const, text: brief.subtitle, importance: 'secondary' as const }]
-                : []),
-            ];
+    if (brief.languageMode === 'hebrew' && postImageType !== 'photo') {
+      const hebrewElements: TextElement[] = approvedPosterTextElements;
       devInfo('[HebrewCopy] editor reviewing copy…', {
         elementCount: hebrewElements.length,
+        maxPosterTextElements,
       });
       const tHebrew = Date.now();
-      // Run Hebrew refinement and logo fetch in parallel (logo was started earlier)
       const [refinement] = await Promise.all([
-        refineAndValidateHebrewCopy(openai, hebrewElements, costAcc),
+        refineAndValidateHebrewCopy(
+          openai,
+          hebrewElements,
+          maxPosterTextElements,
+          costAcc,
+        ),
         logoPromise,
       ]);
       devInfo('⏱ [timing] hebrew edit + logo fetch (parallel)', { ms: Date.now() - tHebrew });
@@ -3939,20 +2780,21 @@ export const generateMarketingPost = action({
       devInfo('[HebrewCopy] ✅ copy locked', {
         qualityScore: refinement.qualityScore,
         finalElementCount: refinement.refinedElements.length,
+        postImageType,
       });
     }
 
     // ── 3. Build image prompt + generate ────────────────────────────────────
-    // logoPromise was started early; awaiting here is instant if already resolved
     const logoReference = await logoPromise;
-    devInfo('🔖 Logo reference', {
+    devInfo('🔖 Image references (legacy designed/photo)', {
       present: Boolean(profile.logoUrl),
-      fetched: Boolean(logoReference),
+      logoFetched: Boolean(logoReference),
     });
 
     const imagePrompt = buildSimpleImagePrompt({
       profile,
       brief,
+      approvedTextElements: approvedPosterTextElements,
       assetInsight,
       identity,
       focus,
@@ -3960,10 +2802,12 @@ export const generateMarketingPost = action({
       styleByType,
       servicesFromAllSources,
       postImageType,
+      topic: cleanTopic,
+      postGoal,
     });
 
     const configuredImageModel = process.env.OPENAI_IMAGE_MODEL?.trim();
-    const activeImageModel = BEST_OPENAI_IMAGE_MODEL;
+    const activeImageModel = configuredImageModel || BEST_OPENAI_IMAGE_MODEL;
     devInfo('🖼 [generateMarketingPost] image request summary', {
       IMAGE_PIPELINE_VERSION,
       postImageType,
@@ -3974,11 +2818,9 @@ export const generateMarketingPost = action({
       headlineLength: brief.headline.length,
       subtitleLength: brief.subtitle?.length ?? 0,
       imageModel: activeImageModel,
-      configuredImageModel: configuredImageModel || null,
-      ignoredConfiguredImageModel:
-        configuredImageModel && configuredImageModel !== BEST_OPENAI_IMAGE_MODEL
-          ? configuredImageModel
-          : null,
+      defaultImageModel: BEST_OPENAI_IMAGE_MODEL,
+      usingModelOverride:
+        Boolean(configuredImageModel) && configuredImageModel !== BEST_OPENAI_IMAGE_MODEL,
       hasLogo: Boolean(logoReference),
       promptLength: (imagePrompt + hebrewOverride).length,
     });
@@ -3991,10 +2833,15 @@ export const generateMarketingPost = action({
       role: postImageType === 'photo' ? 'photo' : 'complete_poster',
       languageMode: brief.languageMode,
       logoFile: logoReference?.file ?? null,
+      styleReferenceFile: null,
       acc: costAcc,
     });
     devInfo('⏱ [timing] image generation finished', { ms: Date.now() - tImage });
 
+    // premium_ad and designed return a FULLY designed ad poster from OpenAI
+    // Image (the model renders text, badge, CTA, footer as part of the image).
+    // photo mode returns a clean photograph with no overlay text — the app
+    // adds only a small logo watermark for it.
     const compositionStrategy: CompositionStrategy =
       postImageType === 'photo' ? 'background_with_overlay' : 'complete_image';
 

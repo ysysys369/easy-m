@@ -127,6 +127,7 @@ type PosterText = {
   body?: string;
   cta?: string;
   offer?: string;
+  badge?: string;
   footer?: string;
 };
 
@@ -977,10 +978,14 @@ const HEEBO_REGULAR = 'Heebo_400Regular';
 const HEEBO_BOLD = 'Heebo_700Bold';
 const HEEBO_BLACK = 'Heebo_900Black';
 
-// ─── Square poster overlay ──────────────────────────────────────────────────
-// Background = generated image. RN renders only the selected Hebrew text
-// layers. The creative plan can omit support text or CTA, and choose the text
-// position, while the renderer keeps spacing restrained and export-safe.
+// ─── Premium designed poster — hybrid renderer ──────────────────────────────
+// AI provides ONLY the cinematic hero photo (no text, no logo, no UI). This
+// composer flattens the full agency-quality ad on top: glowing purple frame,
+// brand chip, decorative top-of-panel divider, oversized Hebrew headline,
+// secondary divider, subhead, body line, floating circular badge, gradient
+// CTA pill, contextual footer. Every text element is real React Native text
+// with Heebo, so Hebrew renders perfectly RTL with no AI hallucination. The
+// captured PNG is the single artifact used for preview / save / share / gallery.
 function ComposedPosterImage({
   imageBase64,
   posterText,
@@ -1014,19 +1019,14 @@ function ComposedPosterImage({
   businessWebsite?: string;
   onBackgroundLoadEnd: () => void;
 }) {
-  void businessType;
   void visualStyle;
   void brandStyle;
-  const resolvedTemplate =
-    creativeTemplate ?? getDefaultCreativeTemplate(posterTemplate);
-  const layout = posterLayout ?? DEFAULT_POSTER_LAYOUTS[resolvedTemplate];
-  const palette = getPosterPalette(
-    resolvedTemplate,
-    accentColor,
-    posterTemplate
-  );
-  const brandLabel = businessName?.trim() || 'Easy-M';
-  const isPremium = postImageType === 'premium_ad';
+  void posterLayout;
+  void creativeTemplate;
+  void accentColor;
+  void postImageType;
+
+  const brandLabel = (businessName?.trim() || 'Easy-M').toUpperCase();
 
   // Per-template Hebrew fallback when the generator hasn't returned text yet.
   const fallbackText: PosterText = {
@@ -1045,46 +1045,47 @@ function ComposedPosterImage({
           ? 'אימון שמתאים לכם'
           : 'שירות מקצועי',
     cta: 'לפרטים',
+    badge: 'מומלץ',
   };
 
   const text = posterText ?? fallbackText;
   const headline = text.headline.trim();
-  const supportLine = text.subtitle?.trim() || text.body?.trim() || '';
+  const subtitle = text.subtitle?.trim() || '';
+  const bodyLine = text.body?.trim() || '';
   const ctaText = text.cta?.trim() || '';
-  const textAlign =
-    layout.text_position === 'left'
-      ? 'left'
-      : layout.text_position === 'center'
-        ? 'center'
-        : 'right';
-  const textPanelStyle = getTextPanelStyle(layout.text_position);
+  const badgeText = (text.offer?.trim() || text.badge?.trim() || '').slice(0, 18);
+  const showCta = Boolean(ctaText && ctaText.length <= 22);
 
-  // Show the CTA only when we have a short, real label — protects the photo
-  // from a runaway phrase covering the hero.
-  const showCta = Boolean(ctaText && ctaText.length <= 14);
-
-  // Contact line: phone first, otherwise a cleaned website host.
-  const contactLine = (() => {
+  // Footer should NOT repeat the brand chip. Prefer: explicit copy footer
+  // (when it's NOT just the business name) → business type + city → contact.
+  const footerLine = (() => {
+    const explicit = text.footer?.trim();
+    if (explicit && explicit.toUpperCase() !== brandLabel) return explicit;
+    const type = businessType?.trim();
     const phone = businessPhone?.trim();
-    if (phone) return phone;
-    const site = businessWebsite?.trim();
-    if (!site) return '';
-    return site
+    const site = businessWebsite
+      ?.trim()
       .replace(/^https?:\/\//i, '')
       .replace(/^www\./i, '')
       .replace(/\/$/, '');
+    if (type && site) return `${type} · ${site}`;
+    if (type && phone) return `${type} · ${phone}`;
+    if (type) return type;
+    if (site) return site;
+    if (phone) return phone;
+    if (explicit) return explicit;
+    return brandLabel;
   })();
 
-  // Sizes tuned for 1:1 square at the current preview width. Headline is the
-  // dominant element; subtitle is half the size; CTA is intentionally modest.
-  const headlineSize = supportLine
-    ? isPremium
-      ? 42
-      : 36
-    : isPremium
-      ? 46
-      : 40;
-  const subtitleSize = isPremium ? 19 : 17;
+  // ── Brand palette ──
+  const PURPLE_GRAD: readonly [string, string, string] = ['#a78bfa', '#7C3AED', '#5b21b6'];
+  const PURPLE_GLOW = 'rgba(124,58,237,0.65)';
+  const PURPLE_SOFT = 'rgba(124,58,237,0.18)';
+
+  // Headline auto-sizes: short headlines go BIG, longer ones scale down.
+  const headlineWords = headline.split(/\s+/).filter(Boolean).length;
+  const headlineSize =
+    headlineWords <= 2 ? 76 : headlineWords <= 4 ? 62 : 50;
 
   return (
     <View
@@ -1095,7 +1096,7 @@ function ComposedPosterImage({
         overflow: 'hidden',
       }}
     >
-      {/* 1. Full-bleed generated background. */}
+      {/* ─── 1. Full-bleed AI hero photo ──────────────────────────────────── */}
       <Image
         accessibilityLabel="תמונת רקע לפוסטר"
         onLoadEnd={onBackgroundLoadEnd}
@@ -1108,73 +1109,186 @@ function ComposedPosterImage({
         resizeMode="cover"
       />
 
-      {/* Readability gradients stay soft so the product/scene remains visible. */}
+      {/* ─── 2. Top dark band (brand chip lives here, hero photo visible
+              below it) — subtle so the photo still breathes. */}
       <LinearGradient
-        colors={['rgba(0,0,0,0.82)', 'rgba(0,0,0,0.0)']}
+        colors={['rgba(0,0,0,0.85)', 'rgba(0,0,0,0.0)']}
         locations={[0, 1]}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '20%' }}
+        pointerEvents="none"
+      />
+
+      {/* ─── 3. Bottom dark design panel — anchors the heavy text composition.
+              Starts deep at the bottom, fades to clear in the middle so the
+              AI hero photo flows naturally INTO the panel instead of being
+              cut off. Two layered gradients give it depth. */}
+      <LinearGradient
+        colors={['rgba(0,0,0,0)', 'rgba(5,2,15,0.55)', 'rgba(5,2,15,0.97)']}
+        locations={[0, 0.35, 1]}
+        style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '60%' }}
+        pointerEvents="none"
+      />
+      <LinearGradient
+        colors={['rgba(91,33,182,0)', 'rgba(91,33,182,0.20)']}
+        locations={[0.4, 1]}
+        style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '60%' }}
+        pointerEvents="none"
+      />
+
+      {/* ─── 4. Ornamental top-of-panel divider — a thin glowing line with a
+              center ✦ that marks where the AI hero meets the design panel.
+              This visual seam is what makes the composition feel like ONE
+              integrated poster instead of "photo + text card". */}
+      <View
+        pointerEvents="none"
         style={{
           position: 'absolute',
-          top: 0,
-          width: '100%',
-          height: layout.text_position === 'top' ? '42%' : '24%',
+          top: '46%',
+          left: 36,
+          right: 36,
+          height: 1,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <LinearGradient
+          colors={['rgba(167,139,250,0)', 'rgba(167,139,250,0.85)']}
+          start={{ x: 0, y: 0.5 }}
+          end={{ x: 1, y: 0.5 }}
+          style={{ flex: 1, height: 1 }}
+        />
+        <View
+          style={{
+            width: 26,
+            height: 26,
+            borderRadius: 13,
+            backgroundColor: 'rgba(91,33,182,0.55)',
+            borderWidth: 1,
+            borderColor: 'rgba(167,139,250,0.85)',
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginHorizontal: 10,
+            shadowColor: '#a78bfa',
+            shadowOffset: { width: 0, height: 0 },
+            shadowOpacity: 0.9,
+            shadowRadius: 8,
+          }}
+        >
+          <Text style={{ color: '#e9d5ff', fontSize: 13, fontWeight: '900' }}>✦</Text>
+        </View>
+        <LinearGradient
+          colors={['rgba(167,139,250,0.85)', 'rgba(167,139,250,0)']}
+          start={{ x: 0, y: 0.5 }}
+          end={{ x: 1, y: 0.5 }}
+          style={{ flex: 1, height: 1 }}
+        />
+      </View>
+
+      {/* ─── 5. Glowing purple frame (premium signature look) ────────────── */}
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          top: 14,
+          left: 14,
+          right: 14,
+          bottom: 14,
+          borderRadius: 22,
+          borderWidth: 1.5,
+          borderColor: 'rgba(167,139,250,0.55)',
+          shadowColor: '#7C3AED',
+          shadowOffset: { width: 0, height: 0 },
+          shadowOpacity: 0.6,
+          shadowRadius: 20,
+        }}
+      />
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          top: 19,
+          left: 19,
+          right: 19,
+          bottom: 19,
+          borderRadius: 17,
+          borderWidth: 0.7,
+          borderColor: 'rgba(255,255,255,0.07)',
         }}
       />
 
-      <LinearGradient
-        colors={['rgba(0,0,0,0.0)', 'rgba(0,0,0,0.85)']}
-        locations={[0, 1]}
-        style={{
-          position: 'absolute',
-          bottom: 0,
-          width: '100%',
-          height: layout.text_position === 'bottom' ? '46%' : '28%',
-        }}
-      />
+      {/* ─── 6. Decorative sparkles in the dark zones (subtle premium feel) ── */}
+      <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
+        <Text style={{ position: 'absolute', top: '7%', left: '14%', color: 'rgba(167,139,250,0.55)', fontSize: 9 }}>✦</Text>
+        <Text style={{ position: 'absolute', top: '11%', right: '22%', color: 'rgba(167,139,250,0.40)', fontSize: 7 }}>✦</Text>
+        <Text style={{ position: 'absolute', bottom: '34%', left: '8%', color: 'rgba(167,139,250,0.45)', fontSize: 8 }}>✦</Text>
+        <Text style={{ position: 'absolute', bottom: '12%', right: '11%', color: 'rgba(167,139,250,0.50)', fontSize: 10 }}>✦</Text>
+        <Text style={{ position: 'absolute', bottom: '6%', left: '20%', color: 'rgba(167,139,250,0.35)', fontSize: 7 }}>✦</Text>
+      </View>
 
-      {/* 4. Top strip: small logo + business name share ONE row, RTL-aligned.
-          Sits inside the top gradient band with 24px safe margins. */}
+      {/* ─── 7. Brand chip (top, centered) ────────────────────────────────────
+          When a real logo exists, the chip is the LOGO with the small label
+          underneath. When no logo, just the business name with letter-spacing.
+          We never duplicate the brand name in the footer. */}
       <View
         style={{
           position: 'absolute',
-          top: 24,
-          ...rtlPosition.start(24),
-          ...rtlPosition.end(24),
-          flexDirection: rtl.flexDirection, // RTL: name first (right), logo second
+          top: 32,
+          left: 24,
+          right: 24,
           alignItems: 'center',
-          gap: 10,
         }}
       >
         {logoUrl ? (
-          // PNG transparency preserved: no card / no opaque background.
-          // A faint shadow keeps the mark legible on busy backgrounds.
           <Image
             accessibilityLabel="לוגו העסק"
             source={{ uri: logoUrl }}
             style={{
-              width: 40,
-              height: 40,
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: 1 },
-              shadowOpacity: 0.45,
-              shadowRadius: 4,
+              width: 48,
+              height: 48,
+              marginBottom: 6,
+              shadowColor: PURPLE_GLOW,
+              shadowOffset: { width: 0, height: 0 },
+              shadowOpacity: 0.9,
+              shadowRadius: 12,
             }}
             resizeMode="contain"
           />
-        ) : null}
+        ) : (
+          <View
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 11,
+              backgroundColor: PURPLE_SOFT,
+              borderWidth: 1,
+              borderColor: 'rgba(167,139,250,0.55)',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 8,
+              shadowColor: PURPLE_GLOW,
+              shadowOffset: { width: 0, height: 0 },
+              shadowOpacity: 0.8,
+              shadowRadius: 10,
+            }}
+          >
+            <Text style={{ color: '#e9d5ff', fontSize: 16, fontWeight: '900' }}>✦</Text>
+          </View>
+        )}
         <Text
           numberOfLines={1}
           adjustsFontSizeToFit
-          minimumFontScale={0.7}
+          minimumFontScale={0.55}
           style={{
-            color: '#ffffff',
+            color: 'rgba(255,255,255,0.94)',
             fontFamily: HEEBO_BOLD,
-            fontSize: 16,
+            fontSize: 12,
             fontWeight: '800',
-            textAlign: 'right',
+            letterSpacing: 2.4,
+            textAlign: 'center',
             writingDirection: 'rtl',
-            letterSpacing: 0,
-            maxWidth: logoUrl ? '74%' : '100%',
-            textShadowColor: 'rgba(0,0,0,0.5)',
+            maxWidth: '78%',
+            textShadowColor: 'rgba(0,0,0,0.7)',
             textShadowOffset: { width: 0, height: 1 },
             textShadowRadius: 4,
           }}
@@ -1183,161 +1297,245 @@ function ComposedPosterImage({
         </Text>
       </View>
 
-      {/* 5. Thin accent divider under the top strip. */}
+      {/* ─── 8. Main composition — headline, divider, subhead, body ──────────
+          Lives inside the bottom design panel so the AI hero stays visible
+          above the ornamental divider in section 4. */}
       <View
         style={{
           position: 'absolute',
-          top: 72,
-          ...rtlPosition.start(24),
-          width: 40,
-          height: 2,
-          borderRadius: 1,
-          backgroundColor: palette.accent,
-          opacity: 0.95,
-        }}
-      />
-
-      {/* Dynamic text block. At most one headline plus one support line. */}
-      <View
-        style={{
-          ...textPanelStyle,
-          padding: 14,
-          borderRadius: 14,
-          overflow: 'hidden',
+          top: '50%',
+          left: 30,
+          right: 30,
+          bottom: '23%',
+          alignItems: 'center',
+          justifyContent: 'flex-start',
+          paddingTop: 14,
         }}
       >
-        <LinearGradient
-          colors={['rgba(0,0,0,0.58)', 'rgba(0,0,0,0.18)']}
-          start={{ x: 1, y: 0 }}
-          end={{ x: 0, y: 1 }}
-          style={StyleSheet.absoluteFillObject}
-        />
         <Text
-          numberOfLines={2}
+          numberOfLines={3}
           adjustsFontSizeToFit
-          minimumFontScale={0.55}
+          minimumFontScale={0.48}
           style={{
             color: '#ffffff',
             fontFamily: HEEBO_BLACK,
             fontSize: headlineSize,
-            lineHeight: headlineSize + 6,
+            lineHeight: Math.round(headlineSize * 1.04),
             fontWeight: '900',
-            textAlign,
+            textAlign: 'center',
             writingDirection: 'rtl',
-            letterSpacing: 0,
-            maxWidth: '100%',
-            textShadowColor: 'rgba(0,0,0,0.6)',
-            textShadowOffset: { width: 0, height: 2 },
-            textShadowRadius: 8,
+            letterSpacing: -0.8,
+            textShadowColor: PURPLE_GLOW,
+            textShadowOffset: { width: 0, height: 0 },
+            textShadowRadius: 22,
           }}
         >
           {headline}
         </Text>
-        {supportLine ? (
+
+        {subtitle ? (
+          <>
+            <View
+              style={{
+                marginTop: 14,
+                marginBottom: 12,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 8,
+              }}
+            >
+              <View style={{ width: 24, height: 1, backgroundColor: 'rgba(167,139,250,0.7)' }} />
+              <Text style={{ color: '#a78bfa', fontSize: 10 }}>✦</Text>
+              <View style={{ width: 24, height: 1, backgroundColor: 'rgba(167,139,250,0.7)' }} />
+            </View>
+            <Text
+              numberOfLines={2}
+              adjustsFontSizeToFit
+              minimumFontScale={0.65}
+              style={{
+                color: '#e9d5ff',
+                fontFamily: HEEBO_BOLD,
+                fontSize: 22,
+                lineHeight: 28,
+                fontWeight: '800',
+                textAlign: 'center',
+                writingDirection: 'rtl',
+                letterSpacing: 0.3,
+                textShadowColor: 'rgba(0,0,0,0.6)',
+                textShadowOffset: { width: 0, height: 1 },
+                textShadowRadius: 4,
+                marginBottom: bodyLine ? 8 : 0,
+              }}
+            >
+              {subtitle}
+            </Text>
+          </>
+        ) : null}
+
+        {bodyLine ? (
           <Text
-            numberOfLines={1}
+            numberOfLines={2}
             adjustsFontSizeToFit
             minimumFontScale={0.7}
             style={{
-              color: palette.accent,
-              fontFamily: HEEBO_BOLD,
-              fontSize: subtitleSize,
-              lineHeight: subtitleSize + 4,
-              fontWeight: '700',
-              textAlign,
+              color: 'rgba(255,255,255,0.82)',
+              fontFamily: HEEBO_REGULAR,
+              fontSize: 15,
+              lineHeight: 22,
+              fontWeight: '500',
+              textAlign: 'center',
               writingDirection: 'rtl',
-              letterSpacing: 0,
-              marginTop: 8,
-              maxWidth: '100%',
-              textShadowColor: 'rgba(0,0,0,0.5)',
+              maxWidth: '94%',
+              textShadowColor: 'rgba(0,0,0,0.6)',
               textShadowOffset: { width: 0, height: 1 },
               textShadowRadius: 4,
+              marginTop: subtitle ? 0 : 12,
             }}
           >
-            {supportLine}
+            {bodyLine}
           </Text>
         ) : null}
       </View>
 
-      {/* Optional CTA. The AI can omit it for branding/mood posts. */}
-      {showCta ? (
-        <View
-          style={[
-            getCtaStyle(layout.cta_position),
-            {
-              bottom:
-                layout.cta_position === 'center'
-                  ? undefined
-                  : contactLine
-                    ? 52
-                    : 28,
-              paddingHorizontal: 24,
-            },
-          ]}
-        >
-          <View
-            style={{
-              minWidth: 124,
-              paddingHorizontal: 20,
-              paddingVertical: 10,
-              borderRadius: 999,
-              backgroundColor: palette.accent,
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: 4 },
-              shadowOpacity: 0.35,
-              shadowRadius: 10,
-              elevation: 6,
-            }}
-          >
-            <Text
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.75}
-              style={{
-                color: palette.ctaText,
-                fontFamily: HEEBO_BOLD,
-                fontSize: 15,
-                fontWeight: '900',
-                textAlign: 'center',
-                writingDirection: 'rtl',
-                letterSpacing: 0,
-              }}
-            >
-              {ctaText}
-            </Text>
-          </View>
-        </View>
-      ) : null}
-
-      {/* 8. Optional small contact footer — single line, safe margins. */}
-      {contactLine ? (
+      {/* ─── 9. Floating circular offer badge (sticker over AI hero) ──────── */}
+      {badgeText ? (
         <View
           style={{
             position: 'absolute',
-            ...rtlPosition.start(24),
-            ...rtlPosition.end(24),
-            bottom: 20,
+            right: 28,
+            top: '24%',
+            width: 100,
+            height: 100,
+            borderRadius: 50,
+            alignItems: 'center',
+            justifyContent: 'center',
+            transform: [{ rotate: '8deg' }],
+            shadowColor: '#7C3AED',
+            shadowOffset: { width: 0, height: 6 },
+            shadowOpacity: 0.85,
+            shadowRadius: 20,
+            elevation: 14,
           }}
         >
-          <Text
-            numberOfLines={1}
+          <LinearGradient
+            colors={['#a78bfa', '#7C3AED', '#4c1d95']}
+            start={{ x: 0.2, y: 0.1 }}
+            end={{ x: 0.8, y: 0.9 }}
             style={{
-              color: 'rgba(255,255,255,0.86)',
-              fontFamily: HEEBO_REGULAR,
-              fontSize: 13,
-              fontWeight: '600',
+              ...StyleSheet.absoluteFillObject,
+              borderRadius: 50,
+              borderWidth: 1.5,
+              borderColor: 'rgba(233,213,255,0.85)',
+            }}
+          />
+          <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, marginBottom: 2 }}>✦</Text>
+          <Text
+            numberOfLines={2}
+            adjustsFontSizeToFit
+            minimumFontScale={0.55}
+            style={{
+              color: '#ffffff',
+              fontFamily: HEEBO_BLACK,
+              fontSize: 15,
+              lineHeight: 17,
+              fontWeight: '900',
               textAlign: 'center',
               writingDirection: 'rtl',
-              letterSpacing: 0,
-              textShadowColor: 'rgba(0,0,0,0.5)',
+              paddingHorizontal: 10,
+              textShadowColor: 'rgba(0,0,0,0.45)',
               textShadowOffset: { width: 0, height: 1 },
               textShadowRadius: 3,
             }}
           >
-            {contactLine}
+            {badgeText}
           </Text>
         </View>
       ) : null}
+
+      {/* ─── 10. CTA pill — full-width gradient with strong glow + ornaments ── */}
+      {showCta ? (
+        <View
+          style={{
+            position: 'absolute',
+            bottom: 82,
+            left: 38,
+            right: 38,
+            borderRadius: 32,
+            shadowColor: '#7C3AED',
+            shadowOffset: { width: 0, height: 10 },
+            shadowOpacity: 0.95,
+            shadowRadius: 24,
+            elevation: 16,
+          }}
+        >
+          <LinearGradient
+            colors={PURPLE_GRAD}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={{
+              borderRadius: 32,
+              paddingVertical: 17,
+              paddingHorizontal: 22,
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.20)',
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 12,
+            }}
+          >
+            <Text style={{ color: '#ffffff', fontSize: 14, opacity: 0.9 }}>✦</Text>
+            <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.6}
+              style={{
+                color: '#ffffff',
+                fontFamily: HEEBO_BLACK,
+                fontSize: 20,
+                fontWeight: '900',
+                textAlign: 'center',
+                writingDirection: 'rtl',
+                letterSpacing: 0.4,
+              }}
+            >
+              {ctaText}
+            </Text>
+            <Text style={{ color: '#ffffff', fontSize: 14, opacity: 0.9 }}>✦</Text>
+          </LinearGradient>
+        </View>
+      ) : null}
+
+      {/* ─── 11. Footer line — tiny, centered, NEVER duplicates the brand chip ── */}
+      <View
+        style={{
+          position: 'absolute',
+          bottom: 36,
+          left: 28,
+          right: 28,
+          alignItems: 'center',
+        }}
+      >
+        <Text
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.65}
+          style={{
+            color: 'rgba(255,255,255,0.72)',
+            fontFamily: HEEBO_REGULAR,
+            fontSize: 12,
+            fontWeight: '500',
+            letterSpacing: 0.8,
+            textAlign: 'center',
+            writingDirection: 'rtl',
+            textShadowColor: 'rgba(0,0,0,0.7)',
+            textShadowOffset: { width: 0, height: 1 },
+            textShadowRadius: 3,
+          }}
+        >
+          {footerLine}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -1400,13 +1598,17 @@ function PostPreviewCard({
 
   const strategy: CompositionStrategy =
     compositionStrategy ?? 'background_with_overlay';
+  // premium_ad: OpenAI Image renders the COMPLETE final poster (hero photo
+  // + Hebrew typography + branding + offer badge + CTA + footer — the whole
+  // designed ad). The app shows that image AS-IS; no RN overlay is drawn on
+  // top. designed mode is the only path that still uses the RN overlay
+  // composer (for compatibility with older designed posts).
   const isComposedPoster =
     strategy === 'complete_image' ||
     postImageType === 'designed' ||
     postImageType === 'premium_ad';
   const isRnOverlayPoster =
-    strategy === 'background_with_overlay' &&
-    (postImageType === 'designed' || postImageType === 'premium_ad');
+    strategy === 'background_with_overlay' && postImageType === 'designed';
   const imageAspectRatio = isComposedPoster ? 1 : 4 / 5;
 
   // Branded composite — captured for save/share so the logo + accent travel with the image
