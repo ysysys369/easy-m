@@ -17,7 +17,8 @@
       "supportsTablet": true,
       "infoPlist": {
         "ExpoLocalization_supportsRTL": true,
-        "ExpoLocalization_forcesRTL": true
+        "ExpoLocalization_forcesRTL": true,
+        "ITSAppUsesNonExemptEncryption": false
       },
       "bundleIdentifier": "com.yanir.easym.app",
       "appleTeamId": "7K34LH2T5S"

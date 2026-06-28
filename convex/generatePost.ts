@@ -2197,22 +2197,58 @@ type CleanPremiumAdBrief = {
   imagePrompt: string;
 };
 
+// Picks a sensible default palette direction when the business profile
+// does not provide one. Used by the fallback prompt only; the GPT-4o-mini
+// brief picks its own palette based on brandColors + business type + photo
+// cues from the user's uploaded images.
+function defaultPaletteForBusinessType(businessType: string): string {
+  const t = businessType.toLowerCase();
+  if (/(מסעדה|בית קפה|אוכל|קפה|מאפיה|סושי|פיצה|restaurant|cafe|sushi|pizza|food)/.test(t)) {
+    return 'warm appetizing tones: rich amber, deep terracotta, golden glow, soft cream, dark wood accents';
+  }
+  if (/(כושר|ספורט|אימון|fitness|gym|mma|crossfit)/.test(t)) {
+    return 'bold high-contrast tones: charcoal black, concrete grey, one electric accent (orange/red/blue), hard rim light';
+  }
+  if (/(קוסמטיקה|יופי|איפור|טיפוח|ביוטי|beauty|cosmetics|spa|nails|salon)/.test(t)) {
+    return 'luxury soft tones: blush, cream, ivory, brushed gold, marble white, soft pastels';
+  }
+  if (/(מספרה|תספורת|barber|hair)/.test(t)) {
+    return 'editorial salon tones: warm leather brown, amber tungsten, deep navy, vintage cream';
+  }
+  if (/(אופנה|בגדים|בוטיק|fashion|boutique|apparel)/.test(t)) {
+    return 'editorial fashion neutrals: soft tan, cream, charcoal, with one bold accent (terracotta, deep red, or olive)';
+  }
+  if (/(נדל|דירה|בית|real estate|property)/.test(t)) {
+    return 'architectural warm tones: cream, beige, deep terracotta, warm golden-hour interior light';
+  }
+  if (/(עורך דין|משפט|רואה חשבון|יועץ|lawyer|attorney|consultant|advisor|professional)/.test(t)) {
+    return 'corporate refined tones: deep navy, ivory, charcoal, brass and warm wood accents';
+  }
+  return 'modern premium neutral tones aligned with the business brand identity';
+}
+
 function buildFallbackCleanImagePrompt(profile: NonNullable<BusinessProfile>): string {
   const name = profile.businessName?.trim() || 'בית עסק';
   const type = profile.businessType?.trim() || 'עסק מקומי';
+  const brandColors = profile.brandColors?.trim();
+  const palette = brandColors || defaultPaletteForBusinessType(type);
+  const logoLine = profile.logoUrl
+    ? 'A real business logo PNG is attached as image input — place it as the brand mark at the top of the dark panel, preserving its native transparency exactly (no white card, no rounded box, no opaque background behind it); keep it small and refined.'
+    : `A small uppercase brand mark "${name}" rendered as on-brand typography at the top of the dark panel with letter-spacing.`;
   return (
     'Premium Israeli Instagram sponsored advertisement, square 1:1, professional agency-quality design. ' +
-    `Split-layout: a polished commercial photograph of a ${type} on the right 55%, and a dark gradient text panel on the left 45%. ` +
-    `Inside the dark panel: a small uppercase brand mark "${name}" at the top with letter-spacing; ` +
-    'a large bold Hebrew headline "בדיוק בשבילכם" in pure white with subtle purple glow; ' +
-    'a thin purple ornamental divider line with a center diamond; ' +
-    'a smaller Hebrew subheadline "שירות מקצועי" in light purple; ' +
-    `a small Hebrew body line "${type}" in light gray; ` +
-    'a floating circular gradient purple offer badge with "מומלץ" in bold white, slightly rotated; ' +
-    'a full-width gradient purple CTA pill at the bottom with "לפרטים" in bold white; ' +
+    `Split-layout: a polished commercial photograph of a ${type} on the right 55%, and a soft gradient text panel on the left 45% styled to feel native to this business. ` +
+    `${logoLine} ` +
+    'Inside the panel: a large bold Hebrew headline "בדיוק בשבילכם" in high-contrast on-brand color; ' +
+    'a thin ornamental divider line with a center diamond in the brand accent color; ' +
+    'a smaller Hebrew subheadline "שירות מקצועי" in a soft on-brand secondary color; ' +
+    `a small Hebrew body line "${type}" in a low-contrast neutral; ` +
+    'a floating circular brand-accent offer badge with "מומלץ" in bold white, slightly rotated; ' +
+    'a full-width brand-accent CTA pill at the bottom with "לפרטים" in bold white; ' +
     'a tiny Hebrew footer line with the business category. ' +
-    'Premium palette: deep black with electric purple (#7C3AED → #a78bfa) accents. ' +
-    'Subtle glowing purple frame around the whole poster. Real Hebrew letters, strict right-to-left order. ' +
+    `Palette MUST be: ${palette}. Use it consistently across the panel, divider, badge and CTA. ` +
+    'Subtle glow around the frame in the brand accent color, never default-purple unless the brand actually calls for it. ' +
+    'Real Hebrew letters, strict right-to-left order. ' +
     'No duplicated text, no fake prices, no fake phone numbers, no QR codes. ' +
     'Square 1:1, premium agency quality, photorealistic hero, polished typography.'
   );
@@ -2271,6 +2307,9 @@ async function generateCleanPremiumAdBrief(
     imagePrompt: buildFallbackCleanImagePrompt(profile),
   };
 
+  const hasLogo = Boolean(profile.logoUrl);
+  const defaultPaletteHint = defaultPaletteForBusinessType(businessType);
+
   try {
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -2281,7 +2320,7 @@ async function generateCleanPremiumAdBrief(
         {
           role: 'system',
           content:
-            'You are a senior Israeli creative director composing ONE focused image-generation prompt for a complete designed social media advertisement. The prompt is sent to OpenAI\'s image model and must produce a finished agency-grade poster with multiple text zones — never a photo with one headline. Return JSON only.',
+            'You are a senior Israeli creative director composing ONE focused image-generation prompt for a complete designed social media advertisement. The prompt is sent to OpenAI\'s image model and must produce a finished agency-grade poster with multiple text zones — never a photo with one headline. The design MUST feel authentic to THIS specific business: its real brand colors, its category, its tone, the look of its uploaded photos. Do NOT default to a generic dark/purple template. Return JSON only.',
         },
         {
           role: 'user',
@@ -2293,10 +2332,15 @@ async function generateCleanPremiumAdBrief(
             (services ? `Services/products: ${services}\n` : '') +
             (audience ? `Audience: ${audience}\n` : '') +
             (tone ? `Mood/tone: ${tone}\n` : '') +
-            (brandColors ? `Brand colors: ${brandColors}\n` : '') +
+            (brandColors
+              ? `Brand colors (USE THESE — they define the poster palette): ${brandColors}\n`
+              : `Brand colors: not provided — derive a palette that genuinely fits this business type (suggested direction: ${defaultPaletteHint})\n`) +
             (profile.city ? `City: ${profile.city}\n` : '') +
             `Topic for this post: ${topic.trim() || 'choose the strongest angle for this business'}\n` +
-            (assetCues ? `Cues from uploaded business photos: ${assetCues}\n` : '') +
+            (assetCues ? `Cues from uploaded business photos (use these for atmosphere, colors, materials): ${assetCues}\n` : '') +
+            `Logo: ${hasLogo
+              ? 'YES — the real business logo PNG is attached as an image input to the image model. Tell the image model to integrate the attached logo PNG as the brand mark at the top of the text panel, preserving its native transparency exactly (no white card, no rounded box, no opaque background behind it), small and refined, never duplicated.'
+              : 'NO logo uploaded — the brand mark must be the business NAME rendered as small uppercase on-brand typography at the top of the panel.'}\n` +
             (recentLine ? `Avoid repeating recent posts: ${recentLine}\n` : '') +
             '\n' +
             'RETURN JSON ONLY with this exact shape:\n' +
@@ -2306,23 +2350,28 @@ async function generateCleanPremiumAdBrief(
             '  "image_prompt": "ONE English paragraph (900-1500 chars) describing a complete premium Israeli Instagram sponsored ad, square 1:1, with multiple text zones inside the image."\n' +
             '}\n' +
             '\n' +
-            'IMAGE_PROMPT REQUIREMENTS — your image_prompt MUST include:\n' +
-            '1. Split-layout poster — a polished hero photograph on ONE side (right or left), and a dark gradient text panel on the OTHER side.\n' +
+            'IMAGE_PROMPT REQUIREMENTS — your image_prompt MUST include ALL of the following:\n' +
+            '1. Split-layout poster — a polished hero photograph on ONE side (right or left), and a soft gradient text panel on the OTHER side. The panel\'s background tone MUST come from the BUSINESS palette below, NOT a default dark color.\n' +
             '2. ALL Hebrew text strings inlined naturally, writing the EXACT Hebrew words inside double quotes — not placeholders. Required text zones:\n' +
-            '   a. small uppercase brand mark at the top of the dark panel reading the business name (Hebrew or English depending on the brand)\n' +
-            '   b. large bold Hebrew HEADLINE of 2-5 words in pure white with subtle purple glow\n' +
-            '   c. thin purple ornamental divider line with a center diamond\n' +
-            '   d. smaller bold Hebrew SUBHEADLINE of 2-6 words in light purple\n' +
-            '   e. small Hebrew BODY line of 3-8 words in light gray\n' +
-            '   f. floating circular gradient purple OFFER BADGE with bold short Hebrew text inside of 1-3 words, slightly rotated\n' +
-            '   g. full-width gradient purple CTA pill button at the bottom with bold short Hebrew CTA of 1-3 words in white\n' +
-            '   h. tiny Hebrew FOOTER line at the very bottom (business name or category)\n' +
-            '3. A vivid description of the hero photograph content specific to this business type.\n' +
-            '4. Color palette: deep black background with electric purple (#7C3AED → #a78bfa) accents.\n' +
-            '5. Subtle glowing purple frame around the whole poster.\n' +
+            (hasLogo
+              ? '   a. The attached business LOGO PNG, integrated as the small brand mark at the top of the panel — preserve its transparency exactly; no white card, no opaque box behind it.\n'
+              : `   a. Small uppercase brand-mark text reading the business name ("${businessName}") with letter-spacing at the top of the panel.\n`) +
+            '   b. Large bold Hebrew HEADLINE of 2-5 words in a high-contrast on-brand color\n' +
+            '   c. Thin ornamental divider line with a center diamond — use the brand accent color\n' +
+            '   d. Smaller bold Hebrew SUBHEADLINE of 2-6 words in a soft on-brand secondary color\n' +
+            '   e. Small Hebrew BODY line of 3-8 words in a low-contrast neutral\n' +
+            '   f. Floating circular gradient OFFER BADGE in the brand accent color with bold short Hebrew text of 1-3 words, slightly rotated\n' +
+            '   g. Full-width brand-accent CTA pill button at the bottom with bold short Hebrew CTA of 1-3 words in white\n' +
+            '   h. Tiny Hebrew FOOTER line at the very bottom (business name or category)\n' +
+            '3. A vivid description of the hero photograph content specific to this business type — what is actually being sold or experienced.\n' +
+            `4. COLOR PALETTE — derive directly from "Brand colors" above. If the user provided brand colors, USE THEM literally for the panel background, divider, badge, CTA glow and frame. If not provided, use a palette that fits the business type (suggested direction: ${defaultPaletteHint}). Do NOT default to deep black + purple unless the brand actually calls for it. The whole ad must visually feel like this specific brand.\n` +
+            '5. Subtle glow around the frame in the BRAND accent color (never default-purple unless it is the brand color).\n' +
             '6. Hebrew text rules: real Hebrew letters (Unicode U+05D0–U+05EA), strict right-to-left order, no broken letters, no Latin substitutions inside Hebrew words.\n' +
             '7. Forbid clause: duplicated text, ghost text, fake prices, fake percentages, fake phone numbers, fake URLs, fake addresses, QR codes.\n' +
-            '8. End the paragraph with the literal sentence: "Square 1:1, premium agency quality, photorealistic hero, polished typography."\n' +
+            (hasLogo
+              ? '8. Explicitly instruct the image model: "A real business logo PNG is attached as image input — integrate the actual attached logo as the brand mark; preserve its native transparency; never wrap it in a white card or opaque box; never invent a second fake logo."\n'
+              : '') +
+            '9. End the paragraph with the literal sentence: "Square 1:1, premium agency quality, photorealistic hero, polished typography, brand-driven palette."\n' +
             '\n' +
             'NEVER invent fake prices, percentages, phone numbers, URLs, addresses, or contact details. Choose short natural Israeli Hebrew copy that fits this business. The caption_hebrew should match the same campaign idea as the poster.',
         },
@@ -2473,9 +2522,21 @@ export const generateMarketingPost = action({
       });
       devInfo('🧼 [generateMarketingPost] CLEAN premium_ad pipeline');
 
+      // Fetch the real business logo PNG in parallel with asset analysis + brief
+      // generation. When present, it is attached to the image API call so the
+      // model integrates the ACTUAL logo as the brand mark (instead of inventing
+      // one or omitting it entirely). When absent, the brief tells the model to
+      // render the business name as compact on-brand typography instead.
       const tAssetsClean = Date.now();
-      const assetInsightClean = await analyzeBrandAssets(openai, profile, costAcc);
-      devInfo('⏱ [timing] brand asset analysis', { ms: Date.now() - tAssetsClean });
+      const [assetInsightClean, logoReferenceClean] = await Promise.all([
+        analyzeBrandAssets(openai, profile, costAcc),
+        fetchLogoAsUploadable(profile.logoUrl),
+      ]);
+      devInfo('⏱ [timing] brand asset analysis + logo fetch', {
+        ms: Date.now() - tAssetsClean,
+        logoUrlPresent: Boolean(profile.logoUrl),
+        logoFetched: Boolean(logoReferenceClean),
+      });
 
       const tBriefClean = Date.now();
       const cleanBrief = await generateCleanPremiumAdBrief(
@@ -2494,19 +2555,23 @@ export const generateMarketingPost = action({
       }
 
       // UNCONDITIONAL PRE-IMAGE-CALL SENTINEL — confirms which model & endpoint
-      // will actually be hit, whether any image inputs are attached (must both
-      // be null in clean pipeline → forces images.generate), and what prompt
+      // will actually be hit, whether the logo PNG is attached, and what prompt
       // was built. First 300 chars of the prompt only; no secrets.
       const _configuredModelClean = process.env.OPENAI_IMAGE_MODEL?.trim();
       const _activeModelClean = _configuredModelClean || BEST_OPENAI_IMAGE_MODEL;
+      const _logoFileForCall = logoReferenceClean?.file ?? null;
+      const _willAttachLogo = Boolean(_logoFileForCall);
       console.info('[generatePost] 🖼 PRE-IMAGE-CALL (clean premium_ad)', {
         IMAGE_PIPELINE_VERSION,
         activeImageModel: _activeModelClean,
         defaultImageModel: BEST_OPENAI_IMAGE_MODEL,
         usingModelOverride:
           Boolean(_configuredModelClean) && _configuredModelClean !== BEST_OPENAI_IMAGE_MODEL,
-        endpointWillBe: 'images.generate',
-        logoFileIsNull: true,
+        endpointWillBe: _willAttachLogo ? 'images.edit' : 'images.generate',
+        logoUrlPresent: Boolean(profile.logoUrl),
+        logoPngAttached: _willAttachLogo,
+        brandColorsProvided: Boolean(profile.brandColors?.trim()),
+        brandColors: profile.brandColors?.trim() || null,
         styleReferenceFileIsNull: true,
         imagePromptLength: cleanBrief.imagePrompt.length,
         imagePromptPreviewFirst300: cleanBrief.imagePrompt.slice(0, 300),
@@ -2526,7 +2591,7 @@ export const generateMarketingPost = action({
         prompt: cleanBrief.imagePrompt,
         role: 'complete_poster',
         languageMode: 'hebrew',
-        logoFile: null,
+        logoFile: _logoFileForCall,
         styleReferenceFile: null,
         acc: costAcc,
       });
@@ -2562,7 +2627,20 @@ export const generateMarketingPost = action({
         postImageType,
         totalGenerationMs: cleanTotalMs,
       });
-      await ctx.runMutation(api.users.incrementPostsGenerated);
+      // Quota is consumed ONLY when a real image was produced. If the image
+      // call returned null/empty (OpenAI outage, content policy, etc.) we
+      // still surface the caption in the return shape but the user keeps
+      // their free post / weekly slot so they can retry.
+      const cleanImageProduced = Boolean(cleanImageBase64 && cleanImageBase64.length > 0);
+      if (cleanImageProduced) {
+        await ctx.runMutation(api.users.incrementPostsGenerated);
+      } else {
+        devWarn('⚠️ [CLEAN premium_ad] image missing — NOT incrementing quota', {
+          IMAGE_PIPELINE_VERSION,
+          postImageType,
+          totalGenerationMs: cleanTotalMs,
+        });
+      }
 
       devInfo('✅ [CLEAN premium_ad] SUCCESS', {
         hasImage: Boolean(cleanImageBase64),
@@ -2848,15 +2926,16 @@ export const generateMarketingPost = action({
     const totalGenerationMs = Date.now() - handlerStartedAt;
 
     if (imageBase64OrNull === null) {
-      // Image generation failed — still deliver the text post so the user
-      // sees their caption rather than a hard error screen.
-      devWarn('⚠️ [generateMarketingPost] image failed — returning text-only post', {
+      // Image generation failed — still deliver the caption so the user
+      // sees their text rather than a hard error screen, but DO NOT consume
+      // quota: a missing image is not a successful post, so the user keeps
+      // their free post / weekly slot and can retry without losing it.
+      devWarn('⚠️ [generateMarketingPost] image failed — returning text-only post, NOT incrementing quota', {
         IMAGE_PIPELINE_VERSION,
         postImageType,
         postGoal,
         totalGenerationMs,
       });
-      await ctx.runMutation(api.users.incrementPostsGenerated);
       return {
         captionText,
         imageBase64: '',

@@ -2050,52 +2050,9 @@ export default function HomePage() {
               </View>
             </>
           ) : null}
-          {/* ─── DEV debug panel ─── */}
-          {IS_DEV_MODE && (() => {
-            const freePostUsedDebug = !effectiveIsPremium && (weeklyStatus?.used ?? 0) > 0;
-            const freeRemaining = !effectiveIsPremium
-              ? Math.max(0, 1 - (weeklyStatus?.used ?? 0))
-              : (weeklyStatus?.remaining ?? 0);
-            const homeMode = effectiveShowPersonalDashboard
-              ? (effectiveIsPremium ? 'premium' : 'free-dashboard')
-              : 'visitor';
-            const rows: [string, string][] = [
-              ['userId', String(user?._id ?? 'loading…')],
-              ['isPremium (RC)', String(isPremium)],
-              ['effectiveIsPremium', String(effectiveIsPremium)],
-              ['homeMode', homeMode],
-              ['weeklyUsed', String(weeklyStatus?.used ?? 'loading…')],
-              ['weeklyRemaining', String(weeklyStatus?.remaining ?? 'loading…')],
-              ['weeklyLimit', String(weeklyStatus?.limit ?? 'loading…')],
-              ['freePostUsed', String(freePostUsedDebug)],
-              ['freePostsRemaining', String(freeRemaining)],
-              ['shouldOpenPaywall', String(
-                !effectiveIsPremium ? freePostUsedDebug : (weeklyStatus?.remaining ?? 1) <= 0
-              )],
-            ];
-            return (
-              <View
-                style={{
-                  margin: 20,
-                  padding: 14,
-                  backgroundColor: 'rgba(234,179,8,0.06)',
-                  borderRadius: 14,
-                  borderWidth: 1,
-                  borderColor: 'rgba(234,179,8,0.22)',
-                }}
-              >
-                <Text style={{ color: '#eab308', fontSize: 11, fontWeight: '700', textAlign: 'right', marginBottom: 10 }}>
-                  🐛 Debug Panel (dev only)
-                </Text>
-                {rows.map(([label, value]) => (
-                  <View key={label} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 2 }}>
-                    <Text style={{ color: '#a1a1aa', fontSize: 11 }}>{value}</Text>
-                    <Text style={{ color: '#71717a', fontSize: 11 }}>{label}</Text>
-                  </View>
-                ))}
-              </View>
-            );
-          })()}
+          {/* Debug Panel removed pre-TestFlight — must not appear in any
+              shipped build. Reintroduce only behind a deliberate local-only
+              flag if needed for future debugging. */}
         </View>
       </ScrollView>
     </SafeAreaView>

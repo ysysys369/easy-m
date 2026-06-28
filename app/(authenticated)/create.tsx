@@ -13,6 +13,7 @@ import {
   Copy,
   Download,
   Image as ImageIcon,
+  Instagram,
   Pencil,
   Share2,
   Sparkles,
@@ -1653,6 +1654,13 @@ function PostPreviewCard({
   const [editedCaption, setEditedCaption] = useState(captionText);
   const [activeCaption, setActiveCaption] = useState(captionText);
   const [sharingTarget, setSharingTarget] = useState<null | string>(null);
+  // Off-screen Instagram Story stage (9:16) — populated on-demand when the
+  // user taps the "שיתוף לסטורי" button. The square poster URI is set into
+  // the stage, the stage is captured at 1080x1920, and the resulting PNG is
+  // what we share with Instagram. The gallery-saved file stays 1:1.
+  const storyStageRef = useRef<View>(null);
+  const [storyPosterUri, setStoryPosterUri] = useState<string | null>(null);
+  const [storyPosterReady, setStoryPosterReady] = useState(false);
 
   useEffect(() => {
     setEditedCaption(captionText);
@@ -1731,6 +1739,40 @@ function PostPreviewCard({
     return dest;
   };
 
+  // Build a 9:16 Instagram-Story-ready PNG by centering the 1:1 poster on a
+  // dark brand-tinted background. The original 1:1 file written by
+  // writeImageToFile() stays untouched — this is a one-off file created
+  // only for sharing to Instagram Stories/Reels.
+  const writeStoryImageToFile = async (
+    sourcePosterUri: string,
+  ): Promise<string> => {
+    if (!FileSystem.documentDirectory) throw new Error('Storage unavailable');
+    if (!storyStageRef.current) throw new Error('STORY_STAGE_NOT_READY');
+
+    // Reset → set new URI → wait for the off-screen Image to render → capture.
+    setStoryPosterReady(false);
+    setStoryPosterUri(sourcePosterUri);
+
+    // Poll up to ~1.5s for the inner Image's onLoadEnd to fire.
+    const start = Date.now();
+    while (!storyPosterReady && Date.now() - start < 1500) {
+      await wait(60);
+    }
+    // One last paint tick so the image actually rasterises before capture.
+    await wait(80);
+
+    const dest = `${FileSystem.documentDirectory}story_${Date.now()}.png`;
+    const tmpUri = await captureRef(storyStageRef, {
+      format: 'png',
+      quality: 0.95,
+      result: 'tmpfile',
+      width: 1080,
+      height: 1920,
+    });
+    await FileSystem.copyAsync({ from: tmpUri, to: dest });
+    return dest;
+  };
+
   const handleSave = async () => {
     try {
       const uri = await writeImageToFile();
@@ -1747,7 +1789,7 @@ function PostPreviewCard({
   };
 
   const handleShareTarget = async (
-    target: 'post' | 'save' | 'text' | 'image' | 'both'
+    target: 'post' | 'save' | 'text' | 'image' | 'both' | 'instagram_story'
   ) => {
     if (sharingTarget) return;
     setSharingTarget(target);
@@ -1757,9 +1799,137 @@ function PostPreviewCard({
         return;
       }
 
+      // ── "שיתוף לסטורי / ריל באינסטגרם" — produces a 9:16 share file with
+      // the square poster centered on a dark brand-tinted background, so the
+      // image fits Instagram Story / Reel framing without being cropped.
+      // The original 1:1 file (used by save/gallery) is untouched.
+      if (target === 'instagram_story') {
+        const hasCaption = activeCaption.trim().length > 0;
+        const squareUri = await writeImageToFile();
+        let storyUri: string;
+        try {
+          storyUri = await writeStoryImageToFile(squareUri);
+        } catch {
+          // If the 9:16 capture fails, fall back to the original 1:1 file
+          // so the user still gets something usable.
+          storyUri = squareUri;
+        }
+
+        try {
+          await NativeShare.share({
+            title: 'Easy-M',
+            message: hasCaption ? activeCaption : undefined,
+            url: storyUri,
+          } as Parameters<typeof NativeShare.share>[0]);
+        } catch {
+          const available = await Sharing.isAvailableAsync();
+          if (available) {
+            await Sharing.shareAsync(storyUri, {
+              mimeType: 'image/png',
+              dialogTitle: 'שיתוף לסטורי באינסטגרם',
+              UTI: 'public.png',
+            });
+          }
+        }
+
+        if (hasCaption) {
+          Alert.alert(
+            'הכיתוב לסטורי',
+            activeCaption + '\n\n(לחץ והחזק כדי להעתיק את הכיתוב)',
+            [{ text: 'סגור', style: 'cancel' }],
+          );
+        }
+        return;
+      }
+
+      // ── "שתף תמונה + טקסט" — share both image AND caption together.
+      // Handles all three cases the user asked for:
+      //   • image + caption → share both
+      //   • image only      → share image
+      //   • caption only    → share text
+      // After the share sheet closes we ALWAYS surface the caption in an
+      // Alert so the user can long-press to copy it — this catches the
+      // common case where the destination app (Instagram, WhatsApp Stories,
+      // etc.) consumed only the image and silently dropped the message.
+      if (target === 'both') {
+        const hasCaption = activeCaption.trim().length > 0;
+
+        if (!hasCaption) {
+          // Image only — same path as the "שתף תמונה בלבד" button.
+          const uri = await writeImageToFile();
+          const available = await Sharing.isAvailableAsync();
+          if (available) {
+            await Sharing.shareAsync(uri, {
+              mimeType: 'image/png',
+              dialogTitle: 'שתף תמונה',
+              UTI: 'public.png',
+            });
+          } else {
+            await NativeShare.share({ title: 'Easy-M', url: uri });
+          }
+          return;
+        }
+
+        // From here on we know there is a caption.
+        let imageShareError: unknown = null;
+        let imageUri: string | null = null;
+        try {
+          imageUri = await writeImageToFile();
+        } catch (error) {
+          imageShareError = error;
+        }
+
+        if (!imageUri) {
+          // No image available — fall back to a text-only share.
+          await NativeShare.share({ message: activeCaption });
+          if (imageShareError) {
+            // Let the user know we shared the caption but the image failed.
+            Alert.alert(
+              'שותף הטקסט בלבד',
+              'לא הצלחנו להכין את התמונה לשיתוף. הכיתוב נשלח לשיתוף כפי שהוא.',
+            );
+          }
+          return;
+        }
+
+        // Both image and caption exist. Try the native share sheet first —
+        // on iOS it surfaces both fields together (Mail/Messages/Notes use
+        // both; Instagram/WhatsApp use only the image).
+        try {
+          await NativeShare.share({
+            title: 'Easy-M',
+            message: activeCaption,
+            url: imageUri,
+          });
+        } catch {
+          // Some Android share targets reject local file URLs via the RN
+          // Share API. Fall back to expo-sharing for reliable image transfer.
+          const available = await Sharing.isAvailableAsync();
+          if (available) {
+            await Sharing.shareAsync(imageUri, {
+              mimeType: 'image/png',
+              dialogTitle: 'שתף תמונה + טקסט',
+              UTI: 'public.png',
+            });
+          }
+        }
+
+        // ALWAYS surface the caption afterwards. If the destination app
+        // already picked up the message, this is a harmless confirmation.
+        // If the destination app dropped the message (common on IG/WA),
+        // this is the user's chance to copy and paste it manually.
+        Alert.alert(
+          'הכיתוב לשיתוף',
+          activeCaption + '\n\n(לחץ והחזק כדי להעתיק את הכיתוב)',
+          [{ text: 'סגור', style: 'cancel' }],
+        );
+        return;
+      }
+
+      // Existing path for 'post' / 'image' / 'save' — unchanged.
       const uri = await writeImageToFile();
 
-      if (target === 'post' || target === 'both') {
+      if (target === 'post') {
         try {
           await NativeShare.share({
             title: 'Easy-M',
@@ -1784,7 +1954,6 @@ function PostPreviewCard({
           post: 'שיתוף פוסט',
           save: 'שמור לגלריה',
           image: 'שתף תמונה בלבד',
-          both: 'שתף תמונה + טקסט',
         }[target] ?? 'שיתוף פוסט';
 
       await Sharing.shareAsync(uri, {
@@ -1793,7 +1962,7 @@ function PostPreviewCard({
         UTI: 'public.png',
       });
 
-      if (target === 'post' || target === 'both') {
+      if (target === 'post') {
         Alert.alert('הקפשן לפוסט', activeCaption, [
           { text: 'סגור', style: 'cancel' },
         ]);
@@ -2125,6 +2294,17 @@ function PostPreviewCard({
           onPress={() => handleShareTarget('both')}
         />
       </View>
+      {/* Dedicated Instagram Story / Reel share — produces a 9:16 file so
+          the square poster sits centered with safe margins inside IG's
+          portrait frame instead of being cropped. */}
+      <View style={{ flexDirection: rtl.flexDirection, gap: 8, marginBottom: 10 }}>
+        <ShareMiniButton
+          icon={<Instagram size={14} color={C.purple} />}
+          label="שיתוף לסטורי באינסטגרם (9:16)"
+          loading={sharingTarget === 'instagram_story'}
+          onPress={() => handleShareTarget('instagram_story')}
+        />
+      </View>
 
       {/* ═══ Secondary action: ערוך טקסט ═══ */}
       <Animated.View style={editBtn.style}>
@@ -2153,6 +2333,103 @@ function PostPreviewCard({
           </Text>
         </Pressable>
       </Animated.View>
+
+      {/* ═══ Off-screen 9:16 Instagram Story stage ═══
+          Populated on-demand by handleShareTarget('instagram_story'). The
+          square poster URI is set into setStoryPosterUri; this stage renders
+          the poster centered on a dark brand-tinted backdrop and is captured
+          at 1080x1920 by writeStoryImageToFile. Positioned far off-screen so
+          it never affects layout and never appears to the user. */}
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          left: -100000,
+          top: -100000,
+          width: 360,
+          height: 640,
+        }}
+      >
+        <View
+          ref={storyStageRef}
+          collapsable={false}
+          style={{
+            width: 360,
+            height: 640,
+            backgroundColor: '#0a0a0a',
+            overflow: 'hidden',
+          }}
+        >
+          {/* Dark brand-tinted gradient background */}
+          <LinearGradient
+            colors={[
+              `${accentColor}55`,
+              '#0a0a0a',
+              '#000000',
+              `${accentColor}33`,
+            ]}
+            locations={[0, 0.35, 0.7, 1]}
+            style={StyleSheet.absoluteFillObject}
+          />
+          {/* Subtle accent corner glow */}
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: -80,
+              left: -80,
+              width: 320,
+              height: 320,
+              borderRadius: 160,
+              backgroundColor: `${accentColor}33`,
+              opacity: 0.6,
+            }}
+          />
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              bottom: -80,
+              right: -80,
+              width: 320,
+              height: 320,
+              borderRadius: 160,
+              backgroundColor: `${accentColor}22`,
+              opacity: 0.5,
+            }}
+          />
+
+          {/* Centered 1:1 poster — 90% width, vertically centered with safe
+              top/bottom margins so Instagram's Story UI overlays do not clip
+              the design. */}
+          {storyPosterUri ? (
+            <View
+              style={{
+                position: 'absolute',
+                left: 18,
+                right: 18,
+                top: '50%',
+                marginTop: -162,
+                width: 324,
+                height: 324,
+                borderRadius: 18,
+                overflow: 'hidden',
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 12 },
+                shadowOpacity: 0.55,
+                shadowRadius: 24,
+              }}
+            >
+              <Image
+                source={{ uri: storyPosterUri }}
+                onLoadEnd={() => setStoryPosterReady(true)}
+                style={{ width: '100%', height: '100%' }}
+                resizeMode="cover"
+              />
+            </View>
+          ) : null}
+        </View>
+      </View>
 
       {/* ═══ Share options modal — kept as a compact secondary sheet if needed ═══ */}
       <Modal
@@ -2221,6 +2498,12 @@ function PostPreviewCard({
               </Text>
             ) : null}
 
+            <ShareOptionRow
+              icon={<Instagram size={22} color={C.purple} />}
+              label="שיתוף לסטורי באינסטגרם (9:16)"
+              loading={sharingTarget === 'instagram_story'}
+              onPress={() => handleShareTarget('instagram_story')}
+            />
             <ShareOptionRow
               icon={<Share2 size={22} color={C.purple} />}
               label="שתף תמונה + טקסט"
@@ -2758,8 +3041,14 @@ export default function CreateScreen() {
                 lineHeight: 30,
               }}
             >
-              {effectiveIsPremium
-                ? 'ניצלת את כל הפוסטים השבועיים שלך 🎯'
+              {/* Branch on the backend-reported quota limit, not on the
+                  in-flight RC isPremium flag. weeklyStatus.limit comes from
+                  Convex (3 for paid users, 1 for free) and reflects the
+                  real effective premium status — so a premium user with a
+                  late-loading RC SDK still sees the correct "3 weekly posts"
+                  text instead of the "1 free post" text. */}
+              {(weeklyStatus?.limit ?? (effectiveIsPremium ? 3 : 1)) > 1
+                ? `ניצלת את כל ${weeklyStatus?.limit ?? 3} הפוסטים השבועיים שלך 🎯`
                 : 'ניצלת את הפוסט החינמי שלך ✨'}
             </Text>
 
