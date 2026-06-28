@@ -2,34 +2,22 @@ import { useAuthActions } from '@convex-dev/auth/react';
 import { useMutation, useQuery } from 'convex/react';
 import { useRouter } from 'expo-router';
 import {
-  Bug,
   Building2,
   Check,
   ChevronLeft,
   CreditCard,
   Image as ImageIcon,
   LayoutTemplate,
-  LogIn,
   LogOut,
-  RotateCcw,
   Settings2,
   Shield,
   Sparkles,
   Trash2,
-  UserPlus,
 } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, Modal, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import {
-  APP_ENV,
-  IS_DEV_MODE,
-  MOCK_PAYMENTS,
-  PAYMENT_SYSTEM_ENABLED,
-} from '@/config/appConfig';
-import { useDevUiOverride } from '@/contexts/DevUiOverrideContext';
-import type { DevUiState } from '@/contexts/DevUiOverrideContext';
 import { useRevenueCat } from '@/contexts/RevenueCatContext';
 import { api } from '@/convex/_generated/api';
 import { rtl, tw } from '@/lib/rtl';
@@ -47,112 +35,6 @@ const C = {
   textSub:    '#52525b',
   textMid:    '#71717a',
 };
-
-// ─── שורת מידע בפאנל דיבאג ──────────────────────────────────────────────────
-function DebugRow({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 }}>
-      <Text style={{ color: '#d4d4d8', fontSize: 13 }}>{value}</Text>
-      <Text style={{ color: C.textMid, fontSize: 13 }}>{label}</Text>
-    </View>
-  );
-}
-
-// ─── כפתור דיבאג ─────────────────────────────────────────────────────────────
-function DebugButton({
-  icon: Icon,
-  label,
-  onPress,
-}: {
-  icon: React.ComponentType<{ size: number; color: string }>;
-  label: string;
-  onPress: () => void;
-}) {
-  const scale = useRef(new Animated.Value(1)).current;
-  const onIn  = () => Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, speed: 60 }).start();
-  const onOut = () => Animated.spring(scale, { toValue: 1,    useNativeDriver: true, speed: 40 }).start();
-
-  return (
-    <Animated.View style={{ transform: [{ scale }] }}>
-      <TouchableOpacity
-        activeOpacity={1}
-        onPressIn={onIn}
-        onPressOut={onOut}
-        onPress={onPress}
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 12,
-          padding: 14,
-          borderRadius: 14,
-          backgroundColor: C.card,
-          borderWidth: 1,
-          borderColor: 'rgba(234,179,8,0.25)',
-        }}
-      >
-        <Icon size={18} color={C.purple} />
-        <Text style={{ flex: 1, color: '#e4e4e7', fontSize: 13, textAlign: 'left' }}>{label}</Text>
-        <ChevronLeft size={16} color={C.textMid} />
-      </TouchableOpacity>
-    </Animated.View>
-  );
-}
-
-// ─── טוגל מצב UI (DEV בלבד) ─────────────────────────────────────────────────
-const UI_STATE_OPTIONS: { value: DevUiState; label: string }[] = [
-  { value: 'real',    label: 'אמיתי'   },
-  { value: 'visitor', label: 'מבקר'    },
-  { value: 'free',    label: 'חינמי'   },
-  { value: 'premium', label: 'פרימיום' },
-];
-
-function UiStateToggle({
-  current,
-  onChange,
-}: {
-  current: DevUiState;
-  onChange: (s: DevUiState) => void;
-}) {
-  return (
-    <View
-      style={{
-        flexDirection: 'row',
-        borderRadius: 14,
-        overflow: 'hidden',
-        borderWidth: 1,
-        borderColor: 'rgba(234,179,8,0.28)',
-      }}
-    >
-      {UI_STATE_OPTIONS.map((opt, i) => {
-        const selected = current === opt.value;
-        return (
-          <TouchableOpacity
-            key={opt.value}
-            onPress={() => onChange(opt.value)}
-            style={{
-              flex: 1,
-              paddingVertical: 10,
-              alignItems: 'center',
-              backgroundColor: selected ? 'rgba(234,179,8,0.22)' : 'transparent',
-              borderStartWidth: i > 0 ? 1 : 0,
-              borderStartColor: 'rgba(234,179,8,0.20)',
-            }}
-          >
-            <Text
-              style={{
-                fontSize: 12,
-                fontWeight: selected ? '700' : '400',
-                color: selected ? '#eab308' : '#71717a',
-              }}
-            >
-              {opt.label}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
-    </View>
-  );
-}
 
 // ─── שורת פעולה ─────────────────────────────────────────────────────────────
 function ActionRow({
@@ -399,15 +281,11 @@ function ImageTypeOption({
 export default function SettingsScreen() {
   const router = useRouter();
   const { signOut } = useAuthActions();
-  const { isPremium, isConfigured, isExpoGo } = useRevenueCat();
-  const { uiOverride, setUiOverride } = useDevUiOverride();
-  const [isDebugOpen, setIsDebugOpen] = useState(false);
+  const { isPremium } = useRevenueCat();
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showDeleteConfirm2, setShowDeleteConfirm2] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [isResettingQuota, setIsResettingQuota] = useState(false);
   const deleteMyAccount = useMutation(api.users.deleteMyAccount);
-  const resetMyPostQuotaForDev = useMutation(api.users.resetMyPostQuotaForDev);
 
   const businessProfile = useQuery(api.businessProfiles.getMyBusinessProfile);
   const updatePostImageType = useMutation(api.businessProfiles.updatePostImageType);
@@ -477,31 +355,6 @@ export default function SettingsScreen() {
       setIsDeleting(false);
       setShowDeleteModal(false);
       Alert.alert('שגיאה', 'מחיקת החשבון נכשלה. אנא נסה שוב או פנה לתמיכה.');
-    }
-  };
-
-  const openPaywallPreview = () => {
-    router.push('/(authenticated)/paywall');
-  };
-
-  const openSignInPreview = () => {
-    router.push('/(auth)/sign-in?preview=true');
-  };
-
-  const openSignUpPreview = () => {
-    router.push('/(auth)/sign-up?preview=true');
-  };
-
-  const handleResetPostQuotaForDev = async () => {
-    if (!IS_DEV_MODE || isResettingQuota) return;
-    setIsResettingQuota(true);
-    try {
-      await resetMyPostQuotaForDev();
-      Alert.alert('בוצע', 'מכסת הפוסטים אופסה לבדיקה.');
-    } catch {
-      Alert.alert('שגיאה', 'לא הצלחנו לאפס את מכסת הפוסטים לבדיקה.');
-    } finally {
-      setIsResettingQuota(false);
     }
   };
 
@@ -680,129 +533,9 @@ export default function SettingsScreen() {
             <ActionRow icon={Trash2}     label="מחיקת חשבון" onPress={handleDeleteAccount} delay={180} destructive />
           </View>
 
-          {/* ─── פאנל דיבאג ─── */}
-          {IS_DEV_MODE && (
-            <View style={{ marginBottom: 16 }}>
-              {/* כותרת פאנל */}
-              <TouchableOpacity
-                onPress={() => setIsDebugOpen(!isDebugOpen)}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: 16,
-                  borderRadius: isDebugOpen ? 0 : 20,
-                  borderTopLeftRadius: 20,
-                  borderTopRightRadius: 20,
-                  backgroundColor: 'rgba(234,179,8,0.08)',
-                  borderWidth: 1,
-                  borderColor: 'rgba(234,179,8,0.28)',
-                  borderBottomWidth: isDebugOpen ? 0 : 1,
-                }}
-              >
-                <Bug size={18} color="#eab308" />
-                <Text style={{ flex: 1, color: '#eab308', fontSize: 14, fontWeight: '600', textAlign: 'left' }}>
-                  קונסולת דיבאג (מצב פיתוח)
-                </Text>
-                <ChevronLeft
-                  size={18}
-                  color="#eab308"
-                  style={{ transform: [{ rotate: isDebugOpen ? '-90deg' : '0deg' }] }}
-                />
-              </TouchableOpacity>
-
-              {/* תוכן פאנל */}
-              {isDebugOpen && (
-                <View
-                  style={{
-                    padding: 16,
-                    borderBottomLeftRadius: 20,
-                    borderBottomRightRadius: 20,
-                    backgroundColor: C.card,
-                    borderWidth: 1,
-                    borderTopWidth: 0,
-                    borderColor: 'rgba(234,179,8,0.28)',
-                  }}
-                >
-                  {/* מצב אפליקציה */}
-                  <Text style={{ color: C.textMid, fontSize: 12, fontWeight: '600', textAlign: 'left', marginBottom: 8 }}>
-                    מצב אפליקציה
-                  </Text>
-                  <View style={{ gap: 2, marginBottom: 16 }}>
-                    <DebugRow label="סביבה"           value={APP_ENV} />
-                    <DebugRow label="מערכת תשלומים"   value={PAYMENT_SYSTEM_ENABLED ? 'פעיל' : 'כבוי'} />
-                    <DebugRow label="תשלומים מדומים"  value={MOCK_PAYMENTS ? 'פעיל' : 'כבוי'} />
-                    <DebugRow label="RevenueCat מוגדר" value={isConfigured ? 'כן' : 'לא'} />
-                    <DebugRow label="Expo Go"          value={isExpoGo ? 'כן' : 'לא'} />
-                    <DebugRow label="סטטוס פרימיום"   value={isPremium ? 'פרימיום' : 'חינמי'} />
-                  </View>
-
-                  {/* בדיקות UI */}
-                  <Text style={{ color: C.textMid, fontSize: 12, fontWeight: '600', textAlign: 'left', marginBottom: 10 }}>
-                    בדיקות UI
-                  </Text>
-                  <View style={{ gap: 8, marginBottom: 20 }}>
-                    <DebugButton icon={CreditCard} label="פתח מסך תשלום (Preview)"      onPress={openPaywallPreview} />
-                    <DebugButton icon={LogIn}      label="פתח מסך התחברות (Preview)"    onPress={openSignInPreview} />
-                    <DebugButton icon={UserPlus}   label="פתח מסך הרשמה (Preview)"      onPress={openSignUpPreview} />
-                    <DebugButton
-                      icon={RotateCcw}
-                      label={isResettingQuota ? 'מאפס מכסת פוסטים...' : 'אפס מכסת פוסטים לבדיקה'}
-                      onPress={handleResetPostQuotaForDev}
-                    />
-                  </View>
-
-                  {/* מצב UI לבדיקות מסך הבית */}
-                  <Text style={{ color: C.textMid, fontSize: 12, fontWeight: '600', textAlign: 'left', marginBottom: 10 }}>
-                    מצב מסך הבית
-                  </Text>
-                  <UiStateToggle current={uiOverride} onChange={setUiOverride} />
-                </View>
-              )}
-            </View>
-          )}
-
-          {/* ─── באנר אוברריד פעיל ─── */}
-          {IS_DEV_MODE && uiOverride !== 'real' && (
-            <View
-              style={{
-                padding: 10,
-                borderRadius: 12,
-                backgroundColor: 'rgba(234,179,8,0.12)',
-                borderWidth: 1,
-                borderColor: 'rgba(234,179,8,0.40)',
-                marginBottom: 8,
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-              }}
-            >
-              <TouchableOpacity onPress={() => setUiOverride('real')}>
-                <Text style={{ color: '#eab308', fontSize: 12, fontWeight: '700' }}>איפוס</Text>
-              </TouchableOpacity>
-              <Text style={{ color: '#eab308', fontSize: 12, fontWeight: '600' }}>
-                מסך הבית: {UI_STATE_OPTIONS.find(o => o.value === uiOverride)?.label}
-              </Text>
-            </View>
-          )}
-
-          {/* ─── באנר מצב פיתוח ─── */}
-          {IS_DEV_MODE && (
-            <View
-              style={{
-                padding: 12,
-                borderRadius: 14,
-                backgroundColor: 'rgba(234,179,8,0.08)',
-                borderWidth: 1,
-                borderColor: 'rgba(234,179,8,0.25)',
-                marginBottom: 8,
-              }}
-            >
-              <Text style={{ color: '#eab308', textAlign: 'center', fontSize: 13, fontWeight: '600' }}>
-                מצב פיתוח פעיל
-              </Text>
-            </View>
-          )}
+          {/* Debug console, dev preview links, "אפס מכסת פוסטים לבדיקה",
+              UI-state toggle and dev-mode banners were removed pre-TestFlight
+              so no dev/test UI can appear to real users in any build profile. */}
 
         </View>
       </ScrollView>

@@ -2825,8 +2825,6 @@ export default function CreateScreen() {
   const generateMarketingPost = useAction(
     api.generatePost.generateMarketingPost
   );
-  const resetMyPostQuotaForDev = useMutation(api.users.resetMyPostQuotaForDev);
-
   const btnScale = useRef(new Animated.Value(1)).current;
   const btnIn = () =>
     Animated.spring(btnScale, {
@@ -3186,31 +3184,7 @@ export default function CreateScreen() {
               </Text>
             </Pressable>
 
-            {/* Dev-only reset button */}
-            {__DEV__ && (
-              <Pressable
-                onPress={async () => {
-                  await resetMyPostQuotaForDev();
-                  setShowUpgrade(false);
-                }}
-                style={{
-                  marginTop: 8,
-                  alignSelf: 'center',
-                  paddingVertical: 6,
-                  paddingHorizontal: 14,
-                  borderRadius: 8,
-                  borderWidth: 1,
-                  borderColor: 'rgba(239,68,68,0.4)',
-                  backgroundColor: 'rgba(239,68,68,0.06)',
-                }}
-              >
-                <Text
-                  style={{ color: '#f87171', fontSize: 11, fontWeight: '600' }}
-                >
-                  🔧 איפוס פוסט חינמי לבדיקה
-                </Text>
-              </Pressable>
-            )}
+            {/* Dev-only reset button removed pre-TestFlight. */}
           </Pressable>
         </Pressable>
       </Modal>
