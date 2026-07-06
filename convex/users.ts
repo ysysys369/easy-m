@@ -166,7 +166,17 @@ export const syncSubscriptionStatus = mutation({
   args: { isPremium: v.boolean() },
   handler: async (ctx, { isPremium }) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return;
+    // Diagnostic log for TestFlight logout/login data-persistence issue.
+    // Safe: identity.subject is a users row _id; identity.email is not a
+    // secret. No tokens or passwords are logged. `isPremium` is a boolean.
+    if (!identity) {
+      console.info('[users.syncSubscriptionStatus] no identity — skipped', {
+        subject: null,
+        email: null,
+        isPremium,
+      });
+      return;
+    }
     const email = identity.email ?? '';
     const now = Date.now();
     const user = await ctx.db
@@ -175,11 +185,22 @@ export const syncSubscriptionStatus = mutation({
       .unique();
     const newUserType = isPremium ? 'paid' : 'free';
     if (user) {
-      if (user.userType !== newUserType) {
+      const changed = user.userType !== newUserType;
+      console.info('[users.syncSubscriptionStatus] existing user found', {
+        subject: identity.subject,
+        email: email || null,
+        userRowId: user._id,
+        subjectMatchesUserRowId: identity.subject === user._id,
+        previousUserType: user.userType ?? null,
+        newUserType,
+        typeChanged: changed,
+        isPremium,
+      });
+      if (changed) {
         await ctx.db.patch(user._id, { userType: newUserType, updatedAt: now });
       }
     } else {
-      await ctx.db.insert('users', {
+      const insertedId = await ctx.db.insert('users', {
         email,
         emailVerified: identity.emailVerified ?? false,
         fullName: identity.name ?? 'User',
@@ -188,6 +209,14 @@ export const syncSubscriptionStatus = mutation({
         isActive: true,
         createdAt: now,
         updatedAt: now,
+      });
+      console.info('[users.syncSubscriptionStatus] no user for email — inserted new row', {
+        subject: identity.subject,
+        email: email || null,
+        insertedUserRowId: insertedId,
+        subjectMatchesInsertedRowId: identity.subject === insertedId,
+        newUserType,
+        isPremium,
       });
     }
   },

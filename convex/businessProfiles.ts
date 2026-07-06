@@ -647,7 +647,17 @@ export const getMyBusinessProfile = query({
   args: {},
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return null;
+    // Diagnostic log for TestFlight logout/login data-persistence issue.
+    // Safe: identity.subject is just a users row _id; identity.email is not
+    // a secret. No tokens or passwords are logged anywhere.
+    if (!identity) {
+      console.info('[businessProfiles.getMyBusinessProfile] no identity', {
+        subject: null,
+        email: null,
+        profileFound: false,
+      });
+      return null;
+    }
 
     const allProfiles = await ctx.db
       .query('businessProfiles')
@@ -655,6 +665,14 @@ export const getMyBusinessProfile = query({
       .collect();
 
     const profile = pickLatest(allProfiles);
+
+    console.info('[businessProfiles.getMyBusinessProfile] identity resolved', {
+      subject: identity.subject,
+      email: identity.email ?? null,
+      profileRowCount: allProfiles.length,
+      profileFound: Boolean(profile),
+      profileId: profile?._id ?? null,
+    });
 
     if (!profile) return null;
 

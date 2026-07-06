@@ -2797,16 +2797,14 @@ export default function CreateScreen() {
   const isQueryLoading =
     weeklyStatus === undefined || businessProfile === undefined;
 
-  // Central quota gate — the SINGLE source of truth for ALL generation flows.
-  // Free users: blocked once postsGenerated >= 1 (regardless of what the DB userType says,
-  // because effectiveIsPremium already respects the dev override).
-  // Paid users: blocked when the rolling 7-day remaining hits 0.
-  const freePostUsed = !effectiveIsPremium && (weeklyStatus?.used ?? 0) > 0;
-  const isLimitReached = weeklyStatus !== undefined && (
-    effectiveIsPremium
-      ? weeklyStatus.remaining <= 0   // paid: use backend weekly remaining
-      : freePostUsed                  // free: any usage = blocked
-  );
+  // Central quota gate — trust the backend's authoritative `remaining` field.
+  // Backend already computes it per user type (paid → 3-per-week, free → 1
+  // lifetime) so we don't need to re-derive the split on the client. This also
+  // eliminates the race where RC's `isPremium` transiently disagrees with the
+  // DB's `userType` and a paid user with slots remaining gets falsely blocked
+  // by the "any usage = free post used" clause.
+  const isLimitReached =
+    weeklyStatus !== undefined && weeklyStatus.remaining <= 0;
   const canGeneratePost = !isQueryLoading && !isLimitReached && hasBusinessProfile;
   const remainingThisWeek = weeklyStatus?.remaining ?? 0;
   const weeklyLimit = weeklyStatus?.limit ?? 3;

@@ -686,13 +686,12 @@ function WeeklyAiSuggestionsSection({ anim }: { anim: Animated.Value }) {
     IS_DEV_MODE && uiOverride === 'free' ? false
     : IS_DEV_MODE && uiOverride === 'premium' ? true
     : isPremium;
-  const freePostUsedSuggestions = !effectiveIsPremiumSuggestions && (weeklyStatus?.used ?? 0) > 0;
+  // Trust the backend's authoritative `remaining` field. It already reflects
+  // per-user-type limits (paid: 3/week, free: 1 lifetime) so we do not need
+  // to re-derive the split on the client. Prevents a race where RC's
+  // isPremium transiently disagrees with the DB userType.
   const isQuotaBlocked =
-    weeklyStatus !== undefined && (
-      effectiveIsPremiumSuggestions
-        ? weeklyStatus.remaining <= 0
-        : freePostUsedSuggestions
-    );
+    weeklyStatus !== undefined && weeklyStatus.remaining <= 0;
 
   const [generating, setGenerating] = useState(false);
   const [autoTriggered, setAutoTriggered] = useState(false);
@@ -1809,18 +1808,9 @@ export default function HomePage() {
                 >
                   ללא כרטיס אשראי • חינם להתחלה
                 </Text>
-                <Pressable
-                  onPress={() => router.push('/(auth)/onboarding')}
-                  accessibilityRole="button"
-                  accessibilityLabel="צפה בסיור מהיר"
-                  style={{ marginTop: 10, alignItems: 'center' }}
-                >
-                  <Text
-                    style={{ color: C.purple, fontSize: 13, fontWeight: '600' }}
-                  >
-                    צפה בסיור מהיר ←
-                  </Text>
-                </Pressable>
+                {/* Removed the "צפה בסיור מהיר" link — the user already
+                    goes through onboarding at signup and does not need a
+                    second entry point back into it from the home screen. */}
               </>
             ) : null}
           </Animated.View>

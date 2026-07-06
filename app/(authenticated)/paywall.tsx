@@ -107,8 +107,9 @@ export default function PaywallScreen() {
     );
   }
 
-  // SDK was never configured (no API key OR running in Expo Go) — show a
-  // helpful explanation instead of a useless empty paywall.
+  // SDK was never configured (no API key present at build time or running in
+  // a preview host that doesn't ship native modules). Show a clean user-facing
+  // message — no env var names, no ".env.local", no reference to RevenueCat.
   if (!isConfigured || isExpoGo) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['top']}>
@@ -123,20 +124,32 @@ export default function PaywallScreen() {
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14 }}>
             <View style={{
               width: 64, height: 64, borderRadius: 20,
-              backgroundColor: 'rgba(234,179,8,0.10)',
-              borderWidth: 1, borderColor: 'rgba(234,179,8,0.40)',
+              backgroundColor: 'rgba(124,58,237,0.10)',
+              borderWidth: 1, borderColor: 'rgba(124,58,237,0.40)',
               alignItems: 'center', justifyContent: 'center',
             }}>
-              <AlertCircle size={28} color="#eab308" />
+              <AlertCircle size={28} color={C.purpleLight} />
             </View>
             <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800', textAlign: 'right', writingDirection: 'rtl', alignSelf: 'stretch' }}>
-              {isExpoGo ? 'לא זמין ב-Expo Go' : 'נדרשת הגדרת RevenueCat'}
+              התשלומים לא זמינים כרגע
             </Text>
             <Text style={{ color: C.textMid, fontSize: 14, textAlign: 'right', writingDirection: 'rtl', alignSelf: 'stretch', lineHeight: 22 }}>
-              {isExpoGo
-                ? 'ה-Paywall דורש Development Build.\nהרץ npx expo run:ios --device.'
-                : 'מפתח API לא נמצא.\nוודא ש-EXPO_PUBLIC_REVENUECAT_TEST_STORE_API_KEY מוגדר ב-.env.local.'}
+              השירות בהקמה. אנא נסה שוב מאוחר יותר או צור קשר עם התמיכה.
             </Text>
+            <Pressable
+              onPress={() => router.back()}
+              style={{
+                marginTop: 6,
+                paddingVertical: 12,
+                paddingHorizontal: 26,
+                borderRadius: 999,
+                backgroundColor: C.purple,
+              }}
+            >
+              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '800' }}>
+                חזרה לאפליקציה
+              </Text>
+            </Pressable>
           </View>
         </View>
       </SafeAreaView>
