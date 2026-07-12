@@ -505,6 +505,13 @@ export default function BusinessProfile() {
 
   const finish = async () => {
     if (!canProceed(step)) return;
+    // Snapshot this BEFORE the mutation runs. `existing` is null/undefined
+    // only for a user who has never saved a business profile — i.e. the
+    // signup → onboarding → business-profile chain. On subsequent saves
+    // (edits from Settings, etc.) `existing` is populated and we keep the
+    // legacy router.back() behaviour so the user returns to where they came
+    // from without seeing the paywall every time they edit their profile.
+    const isFirstSave = !existing;
     setIsSaving(true);
     try {
       const websiteUrl = profile.website.trim() || undefined;
@@ -571,7 +578,23 @@ export default function BusinessProfile() {
       }
 
       Alert.alert('נשמר! ✅', message, [
-        { text: 'אישור', onPress: () => router.back() },
+        {
+          text: 'אישור',
+          onPress: () => {
+            if (isFirstSave) {
+              // First-time onboarding path — introduce the subscription
+              // offer before the user lands on the app. router.replace so
+              // that the paywall's close button falls back cleanly to
+              // /(authenticated) without popping back to this form.
+              // The paywall itself must NOT force payment; its native
+              // close button + our overlay close both allow "continue to
+              // app" so the free post remains available.
+              router.replace('/(authenticated)/paywall');
+            } else {
+              router.back();
+            }
+          },
+        },
       ]);
     } catch {
       Alert.alert('שגיאה', 'לא הצלחנו לשמור. נסה שנית.');

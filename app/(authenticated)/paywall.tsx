@@ -111,11 +111,19 @@ export default function PaywallScreen() {
   // a preview host that doesn't ship native modules). Show a clean user-facing
   // message — no env var names, no ".env.local", no reference to RevenueCat.
   if (!isConfigured || isExpoGo) {
+    // Belt-and-suspenders exit — when we reach paywall via router.replace
+    // (e.g. from the post-onboarding first-save flow), there is nothing to
+    // pop back to. Fall back to replacing into /(authenticated) so the user
+    // always lands on Home and never sees a dead back button.
+    const exitToApp = () => {
+      if (router.canGoBack()) router.back();
+      else router.replace('/(authenticated)');
+    };
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['top']}>
         <View style={{ flex: 1, paddingHorizontal: 24, paddingTop: 20 }}>
           <Pressable
-            onPress={() => router.back()}
+            onPress={exitToApp}
             style={{ flexDirection: rtl.flexDirection, alignItems: 'center', gap: 6, alignSelf: 'flex-end', marginBottom: 28 }}
           >
             <Text style={{ color: C.textMid, fontSize: 14 }}>חזרה</Text>
@@ -137,7 +145,7 @@ export default function PaywallScreen() {
               השירות בהקמה. אנא נסה שוב מאוחר יותר או צור קשר עם התמיכה.
             </Text>
             <Pressable
-              onPress={() => router.back()}
+              onPress={exitToApp}
               style={{
                 marginTop: 6,
                 paddingVertical: 12,
