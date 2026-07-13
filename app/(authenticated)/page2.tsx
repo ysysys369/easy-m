@@ -7,7 +7,6 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react-native';
-import { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -22,8 +21,6 @@ import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { rtl } from '@/lib/rtl';
 
-type PostStatus = 'draft' | 'scheduled' | 'published';
-
 const C = {
   bg:          '#0a0a0a',
   card:        '#111114',
@@ -36,50 +33,12 @@ const C = {
   textSub:     '#52525b',
   textMid:     '#71717a',
   textLight:   '#a1a1aa',
-  green:       '#10b981',
-  greenFaint:  'rgba(16,185,129,0.14)',
-  greenBdr:    'rgba(16,185,129,0.35)',
-  gray:        '#a1a1aa',
-  grayFaint:   'rgba(113,113,122,0.18)',
-  grayBdr:     'rgba(113,113,122,0.40)',
   red:         '#ef4444',
-  redFaint:    'rgba(239,68,68,0.10)',
-  redBdr:      'rgba(239,68,68,0.30)',
 };
-
-const TABS: { label: string; status: PostStatus }[] = [
-  { label: 'פורסמו',    status: 'published' },
-  { label: 'מתוזמנים', status: 'scheduled' },
-  { label: 'טיוטות',    status: 'draft'     },
-];
 
 function formatDate(ts: number) {
   const d = new Date(ts);
   return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
-}
-
-function formatTime(ts: number) {
-  const d = new Date(ts);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
-// ─── Status badge ──────────────────────────────────────────────────────────
-function StatusBadge({ status }: { status: PostStatus }) {
-  const cfg = {
-    draft:     { label: 'טיוטה',  bg: C.grayFaint,   bdr: C.grayBdr,   text: C.gray         },
-    scheduled: { label: 'מתוזמן', bg: C.purpleFaint, bdr: C.purpleBdr, text: C.purpleLight  },
-    published: { label: 'פורסם',  bg: C.greenFaint,  bdr: C.greenBdr,  text: C.green        },
-  }[status];
-  return (
-    <View style={{
-      paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8,
-      backgroundColor: cfg.bg, borderWidth: 1, borderColor: cfg.bdr,
-    }}>
-      <Text style={{ color: cfg.text, fontSize: 10, fontWeight: '700', letterSpacing: 0.3 }}>
-        {cfg.label}
-      </Text>
-    </View>
-  );
 }
 
 // ─── Post card ─────────────────────────────────────────────────────────────
@@ -91,7 +50,6 @@ type Post = {
   businessName?: string;
   businessType?: string;
   generationMode?: 'auto' | 'manual';
-  status: PostStatus;
   createdAt: number;
 };
 
@@ -104,7 +62,6 @@ function PostCard({
   onDelete: () => void;
   onDuplicate: () => void;
 }) {
-  const status = (post.status ?? 'draft') as PostStatus;
   const captionText = post.captionText ?? post.content;
 
   return (
@@ -122,7 +79,7 @@ function PostCard({
         elevation: 5,
       }}
     >
-      {/* Top row: image + content + status */}
+      {/* Top row: image + content */}
       <View style={{ flexDirection: rtl.flexDirection, gap: 12, padding: 12 }}>
         {/* Image (right side in RTL) */}
         {post.imageUri ? (
@@ -144,20 +101,16 @@ function PostCard({
           </View>
         )}
 
-        {/* Right column: badge + business + caption */}
+        {/* Right column: business + caption + date */}
         <View style={{ flex: 1, justifyContent: 'space-between', minHeight: 72 }}>
-          {/* Top row: status + business name */}
-          <View style={{ flexDirection: rtl.flexDirection, alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-            <StatusBadge status={status} />
-            {post.businessName && (
-              <Text
-                numberOfLines={1}
-                style={{ color: '#e4e4e7', fontSize: 12, fontWeight: '700', textAlign: 'right', writingDirection: 'rtl', flexShrink: 1, marginStart: 8 }}
-              >
-                {post.businessName}
-              </Text>
-            )}
-          </View>
+          {post.businessName ? (
+            <Text
+              numberOfLines={1}
+              style={{ color: '#e4e4e7', fontSize: 12, fontWeight: '700', textAlign: 'right', writingDirection: 'rtl', marginBottom: 6 }}
+            >
+              {post.businessName}
+            </Text>
+          ) : null}
 
           {/* Caption preview - max 2 lines */}
           <Text
@@ -167,13 +120,8 @@ function PostCard({
             {captionText}
           </Text>
 
-          {/* Meta row: date + (time if scheduled) */}
-          <View style={{ flexDirection: rtl.flexDirection, alignItems: 'center', justifyContent: 'flex-start', gap: 8, marginTop: 6 }}>
-            {status === 'scheduled' && (
-              <Text style={{ color: C.purpleLight, fontSize: 11, fontWeight: '700' }}>
-                {formatTime(post.createdAt)}
-              </Text>
-            )}
+          {/* Meta row: date */}
+          <View style={{ flexDirection: rtl.flexDirection, alignItems: 'center', justifyContent: 'flex-start', marginTop: 6 }}>
             <Text style={{ color: C.textMid, fontSize: 11 }}>
               {formatDate(post.createdAt)}
             </Text>
@@ -209,12 +157,7 @@ function PostCard({
 }
 
 // ─── Empty state ───────────────────────────────────────────────────────────
-function EmptyState({ activeTab, onCreate }: { activeTab: PostStatus; onCreate: () => void }) {
-  const messages = {
-    draft:     'אין לך פוסטים עדיין',
-    scheduled: 'אין פוסטים מתוזמנים',
-    published: 'עדיין לא פרסמת פוסטים',
-  };
+function EmptyState({ onCreate }: { onCreate: () => void }) {
   return (
     <View style={{ alignItems: 'center', paddingVertical: 60, paddingHorizontal: 24, gap: 14 }}>
       <View style={{
@@ -224,10 +167,10 @@ function EmptyState({ activeTab, onCreate }: { activeTab: PostStatus; onCreate: 
       }}>
         <FileText size={30} color={C.purple} />
       </View>
-      <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700', textAlign: 'center' }}>
-        {messages[activeTab]}
+      <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700', textAlign: 'center', writingDirection: 'rtl' }}>
+        עדיין לא יצרת פוסטים
       </Text>
-      <Text style={{ color: C.textMid, fontSize: 13, textAlign: 'center', lineHeight: 20 }}>
+      <Text style={{ color: C.textMid, fontSize: 13, textAlign: 'center', writingDirection: 'rtl', lineHeight: 20 }}>
         צור את הפוסט הראשון שלך{'\n'}ותתחיל לנהל את התוכן שלך
       </Text>
       <Pressable
@@ -252,22 +195,10 @@ function EmptyState({ activeTab, onCreate }: { activeTab: PostStatus; onCreate: 
 // ─── Main screen ───────────────────────────────────────────────────────────
 export default function Page2() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<PostStatus>('draft');
 
   const posts = useQuery(api.posts.getUserPosts);
   const deletePost = useMutation(api.posts.deletePost);
   const createPost = useMutation(api.posts.createPost);
-
-  const safeStatus = (s?: string): PostStatus =>
-    s === 'scheduled' || s === 'published' ? s : 'draft';
-
-  const filtered = (posts ?? []).filter((p) => safeStatus(p.status) === activeTab);
-
-  const counts = {
-    draft:     (posts ?? []).filter((p) => safeStatus(p.status) === 'draft').length,
-    scheduled: (posts ?? []).filter((p) => safeStatus(p.status) === 'scheduled').length,
-    published: (posts ?? []).filter((p) => safeStatus(p.status) === 'published').length,
-  };
 
   const goCreate = () => router.push('/(authenticated)/create');
 
@@ -294,12 +225,13 @@ export default function Page2() {
         businessType:   post.businessType,
         generationMode: post.generationMode,
       });
-      Alert.alert('שוכפל ✅', 'הפוסט שוכפל לטיוטות');
-      setActiveTab('draft');
+      Alert.alert('שוכפל ✅', 'הפוסט שוכפל');
     } catch {
       Alert.alert('שגיאה', 'לא הצלחנו לשכפל את הפוסט');
     }
   };
+
+  const allPosts = posts ?? [];
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['top']}>
@@ -315,81 +247,14 @@ export default function Page2() {
             flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
             marginBottom: 24,
           }}>
-            {/* Title block — first JSX = physical right in native RTL */}
             <View style={{ flex: 1, marginEnd: 12 }}>
               <Text style={{ color: '#fff', fontSize: 28, fontWeight: '800', textAlign: 'left', marginBottom: 6 }}>
                 הפוסטים שלך
               </Text>
               <Text style={{ color: C.textMid, fontSize: 14, textAlign: 'left' }}>
-                נהל, תזמן ופרסם תוכן בקלות
+                נהל את התוכן שלך במקום אחד
               </Text>
             </View>
-
-          </View>
-
-          {/* ─── Tabs ─── */}
-          <View style={{
-            flexDirection: rtl.flexDirection,
-            backgroundColor: C.card,
-            borderRadius: 16,
-            borderWidth: 1,
-            borderColor: C.border,
-            padding: 4,
-            marginBottom: 20,
-          }}>
-            {TABS.map((tab) => {
-              const isActive = activeTab === tab.status;
-              const count = counts[tab.status];
-              return (
-                <Pressable
-                  key={tab.status}
-                  onPress={() => setActiveTab(tab.status)}
-                  style={{
-                    flex: 1,
-                    paddingVertical: 11,
-                    borderRadius: 12,
-                    backgroundColor: isActive ? C.purpleFaint : 'transparent',
-                    alignItems: 'center',
-                    flexDirection: rtl.flexDirection,
-                    justifyContent: 'center',
-                    gap: 6,
-                  }}
-                >
-                  <Text style={{
-                    color: isActive ? C.purpleLight : C.textMid,
-                    fontSize: 13,
-                    fontWeight: isActive ? '800' : '600',
-                  }}>
-                    {tab.label}
-                  </Text>
-                  {count > 0 && (
-                    <View style={{
-                      minWidth: 18, height: 18, borderRadius: 9,
-                      backgroundColor: isActive ? C.purple : 'rgba(113,113,122,0.30)',
-                      paddingHorizontal: 5,
-                      alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>
-                        {count}
-                      </Text>
-                    </View>
-                  )}
-                </Pressable>
-              );
-            })}
-          </View>
-
-          {/* Active tab indicator (purple underline) */}
-          <View style={{ flexDirection: rtl.flexDirection, marginBottom: 20, marginTop: -16 }}>
-            {TABS.map((tab) => (
-              <View key={tab.status} style={{ flex: 1, alignItems: 'center' }}>
-                <View style={{
-                  height: 2, width: 32,
-                  backgroundColor: activeTab === tab.status ? C.purple : 'transparent',
-                  borderRadius: 1,
-                }} />
-              </View>
-            ))}
           </View>
 
           {/* ─── Posts list / loading / empty ─── */}
@@ -397,11 +262,11 @@ export default function Page2() {
             <View style={{ alignItems: 'center', paddingVertical: 60 }}>
               <ActivityIndicator size="large" color={C.purple} />
             </View>
-          ) : filtered.length === 0 ? (
-            <EmptyState activeTab={activeTab} onCreate={goCreate} />
+          ) : allPosts.length === 0 ? (
+            <EmptyState onCreate={goCreate} />
           ) : (
             <View style={{ gap: 14 }}>
-              {filtered.map((post) => (
+              {allPosts.map((post) => (
                 <PostCard
                   key={post._id}
                   post={post as Post}
@@ -415,33 +280,35 @@ export default function Page2() {
         </View>
       </ScrollView>
 
-      {/* ─── Floating CTA ─── */}
-      <View style={{
-        position: 'absolute',
-        bottom: 150, // above the fixed tab bar
-        width: '100%',
-        paddingHorizontal: 20,
-      }}>
-        <Pressable
-          onPress={goCreate}
-          style={{
-            backgroundColor: C.purple,
-            borderRadius: 18,
-            paddingVertical: 16,
-            flexDirection: rtl.flexDirection, alignItems: 'center', justifyContent: 'center', gap: 8,
-            shadowColor: C.purple,
-            shadowOffset: { width: 0, height: 8 },
-            shadowOpacity: 0.55,
-            shadowRadius: 18,
-            elevation: 12,
-          }}
-        >
-          <Plus size={18} color="#fff" strokeWidth={3} />
-          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '800' }}>
-            צור פוסט חדש
-          </Text>
-        </Pressable>
-      </View>
+      {/* ─── Floating CTA — only when there are posts ─── */}
+      {allPosts.length > 0 ? (
+        <View style={{
+          position: 'absolute',
+          bottom: 150, // above the fixed tab bar
+          width: '100%',
+          paddingHorizontal: 20,
+        }}>
+          <Pressable
+            onPress={goCreate}
+            style={{
+              backgroundColor: C.purple,
+              borderRadius: 18,
+              paddingVertical: 16,
+              flexDirection: rtl.flexDirection, alignItems: 'center', justifyContent: 'center', gap: 8,
+              shadowColor: C.purple,
+              shadowOffset: { width: 0, height: 8 },
+              shadowOpacity: 0.55,
+              shadowRadius: 18,
+              elevation: 12,
+            }}
+          >
+            <Plus size={18} color="#fff" strokeWidth={3} />
+            <Text style={{ color: '#fff', fontSize: 16, fontWeight: '800' }}>
+              צור פוסט חדש
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }

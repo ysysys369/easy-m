@@ -1,6 +1,6 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { ChevronRight } from 'lucide-react-native';
+import { Check, ChevronRight } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
 import {
   Animated,
@@ -47,7 +47,13 @@ const PAIN_OPTIONS = [
 export default function OnboardingScreen() {
   const router       = useRouter();
   const [step,         setStep]        = useState<OnboardingStep>(0);
-  const [selectedPain, setSelectedPain] = useState<string | null>(null);
+  const [selectedPains, setSelectedPains] = useState<string[]>([]);
+
+  const togglePain = (opt: string) => {
+    setSelectedPains((prev) =>
+      prev.includes(opt) ? prev.filter((v) => v !== opt) : [...prev, opt],
+    );
+  };
 
   const stepOpacity = useRef(new Animated.Value(1)).current;
   const stepTransY  = useRef(new Animated.Value(0)).current;
@@ -108,8 +114,8 @@ export default function OnboardingScreen() {
         {step === 1 && <StepWhatsEasyM  onNext={advance} />}
         {step === 2 && (
           <StepPain
-            selected={selectedPain}
-            onSelect={setSelectedPain}
+            selected={selectedPains}
+            onToggle={togglePain}
             onNext={advance}
           />
         )}
@@ -221,11 +227,17 @@ function Sparkle({ x, y, size = 5, delay = 0 }: { x: number; y: number; size?: n
 }
 
 function CTAButton({
-  label, onPress, style,
-}: { label: string; onPress: () => void; style?: any }) {
+  label, onPress, style, disabled = false,
+}: { label: string; onPress: () => void; style?: any; disabled?: boolean }) {
   const scale = useRef(new Animated.Value(1)).current;
-  const onIn  = () => Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, speed: 60 }).start();
-  const onOut = () => Animated.spring(scale, { toValue: 1,    useNativeDriver: true, speed: 35 }).start();
+  const onIn  = () => {
+    if (disabled) return;
+    Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, speed: 60 }).start();
+  };
+  const onOut = () => {
+    if (disabled) return;
+    Animated.spring(scale, { toValue: 1,    useNativeDriver: true, speed: 35 }).start();
+  };
 
   return (
     <Animated.View
@@ -236,10 +248,11 @@ function CTAButton({
           transform: [{ scale }],
           shadowColor: C.purple,
           shadowOffset: { width: 0, height: 12 },
-          shadowOpacity: 0.55,
+          shadowOpacity: disabled ? 0 : 0.55,
           shadowRadius: 26,
-          elevation: 16,
+          elevation: disabled ? 0 : 16,
           borderRadius: 26,
+          opacity: disabled ? 0.45 : 1,
         },
         style,
       ]}
@@ -247,11 +260,16 @@ function CTAButton({
       <Pressable
         onPressIn={onIn}
         onPressOut={onOut}
-        onPress={onPress}
+        onPress={disabled ? undefined : onPress}
+        disabled={disabled}
         style={{ borderRadius: 26, overflow: 'hidden' }}
       >
         <LinearGradient
-          colors={['#8b5cf6', '#7C3AED', '#6D28D9']}
+          colors={
+            disabled
+              ? ['#3f3f46', '#27272a', '#18181b']
+              : ['#8b5cf6', '#7C3AED', '#6D28D9']
+          }
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={{
@@ -264,7 +282,7 @@ function CTAButton({
         >
           <Text
             style={{
-              color: '#fff',
+              color: disabled ? C.textLight : '#fff',
               fontSize: 17,
               fontWeight: '800',
               letterSpacing: 0.3,
@@ -516,7 +534,7 @@ function PainCard({
     }, index * 100);
   }, []);
 
-  const onIn  = () => Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, speed: 80 }).start();
+  const onIn  = () => Animated.spring(scale, { toValue: 0.96, useNativeDriver: true, speed: 80 }).start();
   const onOut = () => Animated.spring(scale, { toValue: 1,    useNativeDriver: true, speed: 50 }).start();
 
   return (
@@ -527,37 +545,61 @@ function PainCard({
         onPressIn={onIn}
         onPressOut={onOut}
         onPress={onPress}
-        style={{
-          backgroundColor: selected ? C.purpleFaint : C.card,
+        accessibilityRole="button"
+        accessibilityState={{ selected }}
+        android_ripple={{ color: C.purpleMid }}
+        style={({ pressed }) => ({
+          backgroundColor: selected ? C.purpleMid : pressed ? '#1a1622' : C.card,
           borderRadius: 16,
-          borderWidth: 1.5,
-          borderColor: selected ? C.purple : C.border,
+          borderWidth: 2,
+          borderColor: selected ? C.purple : C.purpleBdr,
           paddingVertical: 18,
-          paddingHorizontal: 20,
+          paddingHorizontal: 18,
+          flexDirection: rtl.flexDirection,
           alignItems: 'center',
-          shadowColor:   selected ? C.purple : 'transparent',
-          shadowOffset:  { width: 0, height: 6 },
-          shadowOpacity: selected ? 0.38 : 0,
-          shadowRadius:  16,
-          elevation:     selected ? 8 : 0,
-        }}
+          justifyContent: 'space-between',
+          gap: 14,
+          shadowColor:   selected ? C.purple : '#000',
+          shadowOffset:  { width: 0, height: selected ? 8 : 3 },
+          shadowOpacity: selected ? 0.45 : 0.25,
+          shadowRadius:  selected ? 18 : 8,
+          elevation:     selected ? 10 : 3,
+        })}
       >
         <Text style={{
-          color: selected ? C.purpleLight : C.textLight,
+          flex: 1,
+          color: selected ? C.white : '#e4e4e7',
           fontSize: 16,
-          fontWeight: selected ? '700' : '500',
-          textAlign: 'center',
+          fontWeight: selected ? '800' : '600',
+          textAlign: 'right',
+          writingDirection: 'rtl',
         }}>
           {label}
         </Text>
+
+        {/* Checkbox indicator — filled + checkmark when selected */}
+        <View style={{
+          width: 26,
+          height: 26,
+          borderRadius: 8,
+          borderWidth: 2,
+          borderColor: selected ? C.purple : C.purpleBdr,
+          backgroundColor: selected ? C.purple : 'transparent',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+          {selected ? <Check size={16} color="#fff" strokeWidth={3} /> : null}
+        </View>
       </Pressable>
     </Animated.View>
   );
 }
 
 function StepPain({
-  selected, onSelect, onNext,
-}: { selected: string | null; onSelect: (v: string) => void; onNext: () => void }) {
+  selected, onToggle, onNext,
+}: { selected: string[]; onToggle: (v: string) => void; onNext: () => void }) {
+  const canContinue = selected.length > 0;
+
   return (
     <ScrollView
       style={{ flex: 1 }}
@@ -567,24 +609,46 @@ function StepPain({
       <Text style={[T.title, { marginBottom: 12 }]}>
         מה הכי קשה לך{'\n'}בשיווק היום?
       </Text>
-      <Text style={[T.sub, { marginBottom: 30 }]}>
+      <Text style={[T.sub, { marginBottom: 18 }]}>
         בחר את מה שהכי מפריע לך — כדי ש-Easy-M{'\n'}יבנה לך חוויה שמתאימה לעסק שלך.
       </Text>
 
-      <View style={{ gap: 10 }}>
+      {/* Multi-select hint pill */}
+      <View style={{ alignItems: 'center', marginBottom: 18 }}>
+        <View style={{
+          backgroundColor: C.purpleFaint,
+          borderWidth: 1,
+          borderColor: C.purpleBdr,
+          borderRadius: 999,
+          paddingVertical: 6,
+          paddingHorizontal: 14,
+        }}>
+          <Text style={{
+            color: C.purpleLight,
+            fontSize: 13,
+            fontWeight: '700',
+            textAlign: 'center',
+            writingDirection: 'rtl',
+          }}>
+            בחר אפשרות אחת או יותר
+          </Text>
+        </View>
+      </View>
+
+      <View style={{ gap: 12 }}>
         {PAIN_OPTIONS.map((opt, i) => (
           <PainCard
             key={opt}
             label={opt}
-            selected={selected === opt}
-            onPress={() => onSelect(opt)}
+            selected={selected.includes(opt)}
+            onPress={() => onToggle(opt)}
             index={i}
           />
         ))}
       </View>
 
       <View style={{ marginTop: 26 }}>
-        <CTAButton label="המשך" onPress={onNext} />
+        <CTAButton label="המשך" onPress={onNext} disabled={!canContinue} />
       </View>
     </ScrollView>
   );
@@ -624,10 +688,11 @@ function StepValue({ onNext }: { onNext: () => void }) {
       contentContainerStyle={{ paddingHorizontal: 28, paddingTop: 22, paddingBottom: 24 }}
       showsVerticalScrollIndicator={false}
     >
-      <Text style={[T.title, { marginBottom: 12 }]}>
-        Easy-M עושה{'\n'}את זה בשבילך
+      <Text style={[T.title, { writingDirection: 'ltr' }]}>Easy-M</Text>
+      <Text style={[T.title, { marginBottom: 12, writingDirection: 'rtl' }]}>
+        עושה את זה בשבילך
       </Text>
-      <Text style={[T.sub, { marginBottom: 30 }]}>
+      <Text style={[T.sub, { marginBottom: 30, writingDirection: 'rtl' }]}>
         במקום לבזבז שעות על כתיבה ועיצוב,{'\n'}ה-AI יוצר לך פוסט שיווקי מוכן לשיתוף.
       </Text>
 
@@ -658,10 +723,10 @@ function StepValue({ onNext }: { onNext: () => void }) {
               <Text style={{ fontSize: 26 }}>{card.emoji}</Text>
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={{ color: C.white, fontSize: 16, fontWeight: '700', textAlign: 'right' }}>
+              <Text style={{ color: C.white, fontSize: 16, fontWeight: '700', textAlign: 'right', writingDirection: 'rtl' }}>
                 {card.title}
               </Text>
-              <Text style={{ color: C.textLight, fontSize: 13, marginTop: 3, textAlign: 'right' }}>
+              <Text style={{ color: C.textLight, fontSize: 13, marginTop: 3, textAlign: 'right', writingDirection: 'rtl' }}>
                 {card.sub}
               </Text>
             </View>

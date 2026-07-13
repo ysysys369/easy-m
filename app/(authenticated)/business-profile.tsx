@@ -78,6 +78,18 @@ const BUSINESS_TYPE_OTHER = 'אחר ✨';
 
 const STYLES = ['יוקרתי', 'מצחיק', 'מקצועי', 'צעיר', 'רגוע'];
 
+const AUDIENCE_QUICK_OPTIONS = [
+  'כולם',
+  'נשים',
+  'גברים',
+  'צעירים',
+  'משפחות',
+  'עסקים',
+  'ילדים',
+  'בני נוער',
+  'מבוגרים',
+];
+
 const GOALS = [
   'להביא לקוחות חדשים',
   'לפרסם מבצעים',
@@ -503,6 +515,57 @@ export default function BusinessProfile() {
     if (step > 1) setStep(step - 1);
   };
 
+  // Build the full saveProfile payload from the current in-progress form state.
+  // Extracted so both `finish` and the mid-onboarding rescan can persist the
+  // same shape without drift.
+  const buildProfilePayload = () => {
+    const websiteUrl = profile.website.trim() || undefined;
+    const imageMetadataForSave = profile.imageStorageRefs.map((storageRef) => {
+      const meta = profile.imageMetadata.find(
+        (item) => item.storageRef === storageRef
+      );
+      const next: BusinessImageMetadata = { storageRef };
+      if (meta?.label) next.label = meta.label;
+      if (typeof meta?.rating === 'number') next.rating = meta.rating;
+      if (typeof meta?.aiRecommended === 'boolean') {
+        next.aiRecommended = meta.aiRecommended;
+      }
+      if (typeof meta?.featured === 'boolean') next.featured = meta.featured;
+      if (typeof meta?.createdAt === 'number')
+        next.createdAt = meta.createdAt;
+      if (typeof meta?.updatedAt === 'number')
+        next.updatedAt = meta.updatedAt;
+      return next;
+    });
+    return {
+      businessName: profile.businessName.trim(),
+      businessType: profile.businessType || undefined,
+      description: profile.description.trim() || undefined,
+      audience: profile.audience.trim() || undefined,
+      style: profile.style || undefined,
+      city: profile.city.trim() || undefined,
+      website: websiteUrl,
+      websiteUrl,
+      socialInstagram: profile.socialInstagram.trim() || undefined,
+      socialFacebook: profile.socialFacebook.trim() || undefined,
+      goal: profile.goal || undefined,
+      services: profile.services.trim() || undefined,
+      uniqueness: profile.uniqueness.trim() || undefined,
+      // Persist Convex storage IDs, not display URIs. Server resolves them
+      // back to public URLs on read via resolveStorageRef.
+      logoUrl: profile.logoStorageRef || undefined,
+      images: profile.imageStorageRefs.length
+        ? profile.imageStorageRefs
+        : undefined,
+      image:
+        profile.imageMetadata.find((item) => item.featured)?.storageRef ??
+        undefined,
+      imageMetadata: profile.imageStorageRefs.length
+        ? imageMetadataForSave
+        : undefined,
+    };
+  };
+
   const finish = async () => {
     if (!canProceed(step)) return;
     // Snapshot this BEFORE the mutation runs. `existing` is null/undefined
@@ -514,54 +577,9 @@ export default function BusinessProfile() {
     const isFirstSave = !existing;
     setIsSaving(true);
     try {
-      const websiteUrl = profile.website.trim() || undefined;
-      const imageMetadataForSave = profile.imageStorageRefs.map(
-        (storageRef) => {
-          const meta = profile.imageMetadata.find(
-            (item) => item.storageRef === storageRef
-          );
-          const next: BusinessImageMetadata = { storageRef };
-          if (meta?.label) next.label = meta.label;
-          if (typeof meta?.rating === 'number') next.rating = meta.rating;
-          if (typeof meta?.aiRecommended === 'boolean') {
-            next.aiRecommended = meta.aiRecommended;
-          }
-          if (typeof meta?.featured === 'boolean')
-            next.featured = meta.featured;
-          if (typeof meta?.createdAt === 'number')
-            next.createdAt = meta.createdAt;
-          if (typeof meta?.updatedAt === 'number')
-            next.updatedAt = meta.updatedAt;
-          return next;
-        }
-      );
-      await saveProfile({
-        businessName: profile.businessName.trim(),
-        businessType: profile.businessType || undefined,
-        description: profile.description.trim() || undefined,
-        audience: profile.audience.trim() || undefined,
-        style: profile.style || undefined,
-        city: profile.city.trim() || undefined,
-        website: websiteUrl,
-        websiteUrl,
-        socialInstagram: profile.socialInstagram.trim() || undefined,
-        socialFacebook: profile.socialFacebook.trim() || undefined,
-        goal: profile.goal || undefined,
-        services: profile.services.trim() || undefined,
-        uniqueness: profile.uniqueness.trim() || undefined,
-        // Persist Convex storage IDs, not display URIs. Server resolves them
-        // back to public URLs on read via resolveStorageRef.
-        logoUrl: profile.logoStorageRef || undefined,
-        images: profile.imageStorageRefs.length
-          ? profile.imageStorageRefs
-          : undefined,
-        image:
-          profile.imageMetadata.find((item) => item.featured)?.storageRef ??
-          undefined,
-        imageMetadata: profile.imageStorageRefs.length
-          ? imageMetadataForSave
-          : undefined,
-      });
+      const payload = buildProfilePayload();
+      const websiteUrl = payload.websiteUrl;
+      await saveProfile(payload);
       let message = 'פרטי העסק נשמרו בהצלחה';
       if (websiteUrl) {
         setIsScanningWebsite(true);
@@ -616,6 +634,22 @@ export default function BusinessProfile() {
 
     setIsScanningWebsite(true);
     try {
+      // Mid-onboarding path: no profile row exists yet, so the scan action
+      // would throw NO_BUSINESS_PROFILE. Persist a draft profile with the
+      // fields the user has already entered (businessName is required, filled
+      // in step 1) before running the scan. `finish` later patches the same
+      // row via `saveBusinessProfile`, so no duplicate is created.
+      if (!existing) {
+        if (!profile.businessName.trim()) {
+          Alert.alert(
+            'חסר שם עסק',
+            'כדי לסרוק את האתר, מלא קודם את שם העסק בשלב 1.'
+          );
+          return;
+        }
+        await saveProfile(buildProfilePayload());
+      }
+
       const result = await scanBusinessWebsite({ websiteUrl });
       if (!result.success && result.debug && __DEV__) {
         console.warn('Website rescan failed', result.debug);
@@ -733,9 +767,7 @@ export default function BusinessProfile() {
                 />
               )}
               {step === 4 && (
-                <TextStep
-                  title="מי קהל היעד שלך?"
-                  placeholder="לדוגמה: נשים בגיל 25-45, משפחות צעירות..."
+                <AudienceStep
                   value={profile.audience}
                   onChange={(v) => update('audience', v)}
                 />
@@ -773,8 +805,7 @@ export default function BusinessProfile() {
                       disabled={
                         isScanningWebsite ||
                         !profile.website.trim() ||
-                        !isValidUrl(profile.website) ||
-                        !existing
+                        !isValidUrl(profile.website)
                       }
                       accessible={true}
                       accessibilityRole="button"
@@ -792,8 +823,7 @@ export default function BusinessProfile() {
                         opacity:
                           isScanningWebsite ||
                           !profile.website.trim() ||
-                          !isValidUrl(profile.website) ||
-                          !existing
+                          !isValidUrl(profile.website)
                             ? 0.5
                             : 1,
                       }}
@@ -1585,6 +1615,111 @@ function TextStep({
         keyboardType={keyboardType}
         autoCapitalize={autoCapitalize}
       />
+    </View>
+  );
+}
+
+function AudienceStep({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  // Split the current input on commas so a chip already present in the text
+  // renders as "active" — lets the user visually confirm which quick options
+  // are baked into their answer, and prevents duplicate appends.
+  const currentTokens = value
+    .split(',')
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+
+  const handleChipPress = (opt: string) => {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      onChange(opt);
+      return;
+    }
+    if (currentTokens.includes(opt)) return; // already picked — no-op
+    // Preserve whatever the user typed, drop any trailing comma/space, then
+    // append the new chip with a clean ", " separator.
+    const cleanBase = trimmed.replace(/[,\s]+$/, '');
+    onChange(`${cleanBase}, ${opt}`);
+  };
+
+  return (
+    <View>
+      <StepHeader title="מי קהל היעד שלך?" />
+
+      <BareInput
+        placeholder="לדוגמה: נשים בגיל 25-45, משפחות צעירות..."
+        value={value}
+        onChange={onChange}
+      />
+
+      <Text
+        style={{
+          color: C.textLight,
+          fontSize: 13,
+          fontWeight: '600',
+          textAlign: rtl.textAlign,
+          writingDirection: 'rtl',
+          marginTop: 18,
+          marginBottom: 10,
+        }}
+      >
+        או בחר במהירות:
+      </Text>
+
+      <View
+        style={{
+          flexDirection: rtl.flexDirection,
+          flexWrap: 'wrap',
+          gap: 10,
+          justifyContent: 'flex-start',
+        }}
+      >
+        {AUDIENCE_QUICK_OPTIONS.map((opt) => {
+          const selected = currentTokens.includes(opt);
+          return (
+            <Pressable
+              key={opt}
+              onPress={() => handleChipPress(opt)}
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              style={({ pressed }) => ({
+                paddingHorizontal: 16,
+                paddingVertical: 10,
+                borderRadius: 999,
+                backgroundColor: selected
+                  ? C.purple
+                  : pressed
+                    ? C.purpleFaint
+                    : C.cardInner,
+                borderWidth: 1.5,
+                borderColor: selected ? C.purple : C.purpleBdr,
+                shadowColor: C.purple,
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: selected ? 0.4 : 0,
+                shadowRadius: 10,
+                elevation: selected ? 6 : 0,
+              })}
+            >
+              <Text
+                style={{
+                  color: selected ? '#fff' : '#d4d4d8',
+                  fontSize: 14,
+                  fontWeight: selected ? '800' : '600',
+                  textAlign: 'center',
+                  writingDirection: 'rtl',
+                }}
+              >
+                {opt}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
     </View>
   );
 }

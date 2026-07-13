@@ -186,6 +186,9 @@ export const syncSubscriptionStatus = mutation({
     const newUserType = isPremium ? 'paid' : 'free';
     if (user) {
       const changed = user.userType !== newUserType;
+      // Free gift post must not consume the premium weekly quota. When a free
+      // user upgrades, reset the weekly counter so the paid quota starts fresh.
+      const upgradedToPaid = changed && newUserType === 'paid';
       console.info('[users.syncSubscriptionStatus] existing user found', {
         subject: identity.subject,
         email: email || null,
@@ -194,10 +197,18 @@ export const syncSubscriptionStatus = mutation({
         previousUserType: user.userType ?? null,
         newUserType,
         typeChanged: changed,
+        upgradedToPaid,
         isPremium,
       });
       if (changed) {
-        await ctx.db.patch(user._id, { userType: newUserType, updatedAt: now });
+        await ctx.db.patch(user._id, {
+          userType: newUserType,
+          updatedAt: now,
+          ...(upgradedToPaid && {
+            postsUsedThisWeek: 0,
+            lastResetDate: now,
+          }),
+        });
       }
     } else {
       const insertedId = await ctx.db.insert('users', {

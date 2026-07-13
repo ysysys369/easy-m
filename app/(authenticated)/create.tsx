@@ -186,17 +186,17 @@ function Bone({ pulse, w = '100%', h = 14, mb = 10, br = 8 }: BoneProps) {
 const LOGO_IMG = require('@/assets/images/logo.png');
 
 const LOADING_STEPS = [
-  'מנתחים את פרטי העסק שלך...',
-  'בונים רעיון שיווקי...',
   'יוצרים תמונה מקצועית...',
-  'כותבים טקסט מכירתי...',
-  'מכינים האשטגים לפרסום...',
+  'מכינים טקסט שיווקי...',
+  'מוסיפים האשטגים מתאימים...',
+  'מתאימים את התוכן לעסק שלך...',
 ];
 
 function LoadingSkeleton({ finishedAt }: { finishedAt: number | null }) {
   const pulse       = useRef(new Animated.Value(0)).current;
   const glow        = useRef(new Animated.Value(0)).current;
   const bar         = useRef(new Animated.Value(0)).current;
+  const ring        = useRef(new Animated.Value(0)).current;
   const successFade = useRef(new Animated.Value(0)).current;
   const msgFade     = useRef(new Animated.Value(1)).current;
   const dot1Y       = useRef(new Animated.Value(0)).current;
@@ -226,8 +226,11 @@ function LoadingSkeleton({ finishedAt }: { finishedAt: number | null }) {
         Animated.timing(bar, { toValue: 0, duration: 0,    useNativeDriver: false }),
       ])
     ).start();
+    Animated.loop(
+      Animated.timing(ring, { toValue: 1, duration: 3600, useNativeDriver: true })
+    ).start();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-  }, [pulse, glow, bar]);
+  }, [pulse, glow, bar, ring]);
 
   // Staggered bouncing dots
   useEffect(() => {
@@ -265,6 +268,7 @@ function LoadingSkeleton({ finishedAt }: { finishedAt: number | null }) {
   const logoScale   = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.97, 1.03] });
   const glowOpacity = glow.interpolate({ inputRange: [0, 1], outputRange: [0.3, 0.75] });
   const barWidth    = bar.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
+  const ringRotate  = ring.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
 
   return (
     <View style={{ marginBottom: 20 }}>
@@ -302,32 +306,70 @@ function LoadingSkeleton({ finishedAt }: { finishedAt: number | null }) {
             }}
           />
 
-          {/* Logo */}
-          <Animated.View
+          {/* Logo with rotating gradient ring */}
+          <View
             style={{
-              width: 100,
-              height: 100,
-              borderRadius: 28,
+              width: 120,
+              height: 120,
               alignItems: 'center',
               justifyContent: 'center',
-              backgroundColor: 'rgba(124,58,237,0.18)',
-              borderWidth: 1.5,
-              borderColor: 'rgba(167,139,250,0.45)',
-              marginBottom: 28,
-              shadowColor: C.purple,
-              shadowOffset: { width: 0, height: 0 },
-              shadowOpacity: 0.65,
-              shadowRadius: 22,
-              elevation: 10,
-              transform: [{ scale: logoScale }],
+              marginBottom: 24,
             }}
           >
-            <Image
-              source={LOGO_IMG}
-              style={{ width: 66, height: 66, resizeMode: 'contain' }}
-              onError={() => {}}
-            />
-          </Animated.View>
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                width: 120,
+                height: 120,
+                borderRadius: 34,
+                transform: [{ rotate: ringRotate }],
+              }}
+            >
+              <LinearGradient
+                colors={['#a78bfa', 'rgba(167,139,250,0.05)', 'rgba(217,70,239,0.05)', '#d946ef']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={{
+                  flex: 1,
+                  borderRadius: 34,
+                  padding: 2,
+                }}
+              >
+                <View
+                  style={{
+                    flex: 1,
+                    borderRadius: 32,
+                    backgroundColor: '#16082e',
+                  }}
+                />
+              </LinearGradient>
+            </Animated.View>
+            <Animated.View
+              style={{
+                width: 100,
+                height: 100,
+                borderRadius: 28,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: 'rgba(124,58,237,0.18)',
+                borderWidth: 1.5,
+                borderColor: 'rgba(167,139,250,0.45)',
+                shadowColor: C.purple,
+                shadowOffset: { width: 0, height: 0 },
+                shadowOpacity: 0.65,
+                shadowRadius: 22,
+                elevation: 10,
+                transform: [{ scale: logoScale }],
+              }}
+            >
+              <Image
+                source={LOGO_IMG}
+                style={{ width: 66, height: 66, resizeMode: 'contain' }}
+                onError={() => {}}
+              />
+            </Animated.View>
+          </View>
 
           {/* Main title */}
           <Text
@@ -336,15 +378,44 @@ function LoadingSkeleton({ finishedAt }: { finishedAt: number | null }) {
               fontSize: 22,
               fontWeight: '900',
               textAlign: 'center',
+              writingDirection: 'rtl',
               letterSpacing: 0.2,
-              marginBottom: 8,
+              marginBottom: 10,
               textShadowColor: 'rgba(217,70,239,0.5)',
               textShadowOffset: { width: 0, height: 0 },
               textShadowRadius: 10,
             }}
           >
-            יוצרים לך פוסט
+            יוצרים את הפוסט שלך...
           </Text>
+
+          {/* Time expectation chip */}
+          <View
+            style={{
+              flexDirection: rtl.flexDirection,
+              alignItems: 'center',
+              gap: 6,
+              paddingVertical: 6,
+              paddingHorizontal: 12,
+              borderRadius: 999,
+              backgroundColor: 'rgba(124,58,237,0.18)',
+              borderWidth: 1,
+              borderColor: 'rgba(167,139,250,0.35)',
+              marginBottom: 14,
+            }}
+          >
+            <Clock size={13} color="#c4acff" strokeWidth={2.4} />
+            <Text
+              style={{
+                color: '#c4acff',
+                fontSize: 12.5,
+                fontWeight: '700',
+                writingDirection: 'rtl',
+              }}
+            >
+              זה בדרך כלל לוקח בערך 3 דקות
+            </Text>
+          </View>
 
           {/* Static subtitle */}
           <Text
@@ -353,12 +424,13 @@ function LoadingSkeleton({ finishedAt }: { finishedAt: number | null }) {
               fontSize: 13,
               fontWeight: '500',
               textAlign: 'center',
+              writingDirection: 'rtl',
               lineHeight: 20,
               marginBottom: 22,
               paddingHorizontal: 8,
             }}
           >
-            Easy-M בונה תמונה, טקסט והאשטגים שמתאימים לעסק שלך
+            אנחנו בונים תמונה, טקסט והאשטגים שמותאמים לעסק שלך
           </Text>
 
           {/* Rotating step message */}
@@ -2837,9 +2909,22 @@ export default function CreateScreen() {
       speed: 35,
     }).start();
 
+  // Premium users at their weekly cap must NOT see the upgrade modal — they
+  // already pay. Free users still see the paywall/upgrade path.
+  const notifyQuotaReached = () => {
+    if (effectiveIsPremium) {
+      Alert.alert(
+        'הגעת למכסה השבועית',
+        `ניצלת את כל ${weeklyStatus?.limit ?? 3} הפוסטים השבועיים שלך. המכסה תתחדש בשבוע הבא.`,
+      );
+    } else {
+      setShowUpgrade(true);
+    }
+  };
+
   const generate = async (topic: string, mode: GenerationMode) => {
     if (!canGeneratePost) {
-      if (isLimitReached) setShowUpgrade(true);
+      if (isLimitReached) notifyQuotaReached();
       return;
     }
 
@@ -2905,7 +2990,7 @@ export default function CreateScreen() {
         'לא הצלחנו ליצור פוסט כרגע, נסה שוב בעוד רגע.';
 
       if (msg.includes('LIMIT_REACHED')) {
-        setShowUpgrade(true);
+        notifyQuotaReached();
       } else if (msg.includes('NO_BUSINESS_PROFILE')) {
         Alert.alert(
           'פרופיל עסקי חסר',
@@ -2927,13 +3012,13 @@ export default function CreateScreen() {
 
   const handleCreate = () => {
     if (loading) return;
-    if (!canGeneratePost) { if (isLimitReached) setShowUpgrade(true); return; }
+    if (!canGeneratePost) { if (isLimitReached) notifyQuotaReached(); return; }
     if (!content.trim()) return;
     generate(content.trim(), 'manual');
   };
   const handleAutoCreate = () => {
     if (loading) return;
-    if (!canGeneratePost) { if (isLimitReached) setShowUpgrade(true); return; }
+    if (!canGeneratePost) { if (isLimitReached) notifyQuotaReached(); return; }
     generate(content.trim(), 'auto');
   };
 
@@ -3529,23 +3614,20 @@ export default function CreateScreen() {
               </Pressable>
             </View>
           ) : !isQueryLoading && isLimitReached && effectiveIsPremium ? (
-            /* ── Paid weekly limit reached ── */
-            <Pressable
-              onPress={() => router.push('/(authenticated)/paywall')}
-              style={{ marginTop: 10, marginBottom: 24, alignItems: 'center' }}
-            >
+            /* ── Paid weekly limit reached — informational only, no upgrade CTA ── */
+            <View style={{ marginTop: 10, marginBottom: 24, alignItems: 'center' }}>
               <Text
                 style={{
                   color: '#a78bfa',
                   fontSize: 13,
-                  textAlign: 'right',
+                  textAlign: 'center',
                   writingDirection: 'rtl',
+                  lineHeight: 20,
                 }}
               >
-                {`ניצלת את כל ${weeklyLimit} הפוסטים השבועיים`}{' '}·{' '}
-                <Text style={{ textDecorationLine: 'underline' }}>שדרג למנוי</Text>
+                {`ניצלת את כל ${weeklyLimit} הפוסטים השבועיים שלך. המכסה תתחדש בשבוע הבא.`}
               </Text>
-            </Pressable>
+            </View>
           ) : !isQueryLoading ? (
             /* ── Can generate: show remaining ── */
             <View style={{ marginTop: 10, marginBottom: 24, alignItems: 'flex-end' }}>
