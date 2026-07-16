@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
-import { mutation, query } from './_generated/server';
+import type { Id } from './_generated/dataModel';
+import { internalMutation, mutation, query } from './_generated/server';
 
 // ─── Post limit config ───────────────────────────────────────────────────────
 export const WEEKLY_POST_LIMIT = 3;  // paid users: 3 per rolling 7-day window
@@ -30,6 +31,31 @@ function effectiveWeeklyUsed(user: { postsUsedThisWeek?: number; lastResetDate?:
   };
 }
 
+async function findUserByEmail(ctx: { db: any }, email: string) {
+  if (!email) return null;
+  const rows = await ctx.db
+    .query('users')
+    .withIndex('by_email', (q: any) => q.eq('email', email))
+    .collect();
+  if (rows.length === 0) return null;
+  return rows.reduce((best: any, row: any) =>
+    (row.updatedAt ?? row.createdAt ?? 0) > (best.updatedAt ?? best.createdAt ?? 0)
+      ? row
+      : best,
+  );
+}
+
+async function getCurrentAuthUser(ctx: { db: any; auth: any }) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) return { identity: null, user: null };
+
+  const subjectUser = await ctx.db.get(identity.subject as Id<'users'>);
+  if (subjectUser) return { identity, user: subjectUser };
+
+  const emailUser = await findUserByEmail(ctx, identity.email ?? '');
+  return { identity, user: emailUser };
+}
+
 // ─── Push notifications & app activity ──────────────────────────────────────
 
 async function getOrCreateUserByIdentity(
@@ -39,10 +65,7 @@ async function getOrCreateUserByIdentity(
   if (!identity) throw new Error('לא מחובר');
   const email = identity.email ?? '';
   const now = Date.now();
-  const existing = await ctx.db
-    .query('users')
-    .withIndex('by_email', (q: any) => q.eq('email', email))
-    .unique();
+  const { user: existing } = await getCurrentAuthUser(ctx);
   if (existing) return existing;
   const id = await ctx.db.insert('users', {
     email,
@@ -88,12 +111,7 @@ export const setNotificationsEnabled = mutation({
 export const markAppOpened = mutation({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return;
-    const user = await ctx.db
-      .query('users')
-      .withIndex('by_email', (q) => q.eq('email', identity.email ?? ''))
-      .unique();
+    const { user } = await getCurrentAuthUser(ctx);
     if (!user) return;
     await ctx.db.patch(user._id, {
       lastAppOpen: Date.now(),
@@ -106,12 +124,7 @@ export const markAppOpened = mutation({
 export const getPostsGenerated = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return 0;
-    const user = await ctx.db
-      .query('users')
-      .withIndex('by_email', (q) => q.eq('email', identity.email ?? ''))
-      .unique();
+    const { user } = await getCurrentAuthUser(ctx);
     return user?.postsGenerated ?? 0;
   },
 });
@@ -125,14 +138,10 @@ export const getPostsGenerated = query({
 export const getWeeklyPostStatus = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
+    const { identity, user } = await getCurrentAuthUser(ctx);
     if (!identity) {
       return { used: 0, remaining: WEEKLY_POST_LIMIT, limit: WEEKLY_POST_LIMIT, resetAt: Date.now() + WEEK_MS };
     }
-    const user = await ctx.db
-      .query('users')
-      .withIndex('by_email', (q) => q.eq('email', identity.email ?? ''))
-      .unique();
 
     const isPaid = user?.userType === 'paid';
 
@@ -179,10 +188,8 @@ export const syncSubscriptionStatus = mutation({
     }
     const email = identity.email ?? '';
     const now = Date.now();
-    const user = await ctx.db
-      .query('users')
-      .withIndex('by_email', (q) => q.eq('email', email))
-      .unique();
+    const subjectUser = await ctx.db.get(identity.subject as Id<'users'>);
+    const user = subjectUser ?? (await findUserByEmail(ctx, email));
     const newUserType = isPremium ? 'paid' : 'free';
     if (user) {
       const changed = user.userType !== newUserType;
@@ -218,6 +225,8 @@ export const syncSubscriptionStatus = mutation({
         role: 'user',
         userType: newUserType,
         isActive: true,
+        postsGenerated: 0,
+        postsUsedThisWeek: 0,
         createdAt: now,
         updatedAt: now,
       });
@@ -241,15 +250,10 @@ export const syncSubscriptionStatus = mutation({
 export const incrementPostsGenerated = mutation({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
+    const { identity, user } = await getCurrentAuthUser(ctx);
     if (!identity) throw new Error('לא מחובר');
     const email = identity.email ?? '';
     const now = Date.now();
-
-    const user = await ctx.db
-      .query('users')
-      .withIndex('by_email', (q) => q.eq('email', email))
-      .unique();
 
     if (user) {
       const { used } = effectiveWeeklyUsed(user, now);
@@ -269,6 +273,7 @@ export const incrementPostsGenerated = mutation({
         fullName: identity.name ?? 'User',
         role: 'user',
         isActive: true,
+        userType: 'free',
         postsGenerated: 1,
         postsUsedThisWeek: 1,
         lastResetDate: now,
@@ -279,14 +284,50 @@ export const incrementPostsGenerated = mutation({
   },
 });
 
+export const incrementPostsGeneratedForUser = internalMutation({
+  args: {
+    userId: v.string(),
+    email: v.optional(v.string()),
+  },
+  handler: async (ctx, { userId, email }) => {
+    const now = Date.now();
+
+    const user =
+      (await ctx.db.get(userId as Id<'users'>)) ??
+      (await findUserByEmail(ctx, email?.trim() ?? ''));
+
+    if (user) {
+      const { used } = effectiveWeeklyUsed(user, now);
+      const expired = now - (user.lastResetDate ?? 0) >= WEEK_MS;
+      await ctx.db.patch(user._id, {
+        postsGenerated: (user.postsGenerated ?? 0) + 1,
+        postsUsedThisWeek: used + 1,
+        lastResetDate: expired || !user.lastResetDate ? now : user.lastResetDate,
+        updatedAt: now,
+      });
+      return user._id;
+    }
+
+    return await ctx.db.insert('users', {
+      email: email?.trim() ?? '',
+      emailVerified: false,
+      fullName: 'User',
+      role: 'user',
+      userType: 'free',
+      isActive: true,
+      postsGenerated: 1,
+      postsUsedThisWeek: 1,
+      lastResetDate: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+  },
+});
+
 async function resetCurrentUserPostQuotaForDev(ctx: { db: any; auth: any }) {
   assertDevQuotaResetAllowed();
-  const identity = await ctx.auth.getUserIdentity();
+  const { identity, user } = await getCurrentAuthUser(ctx);
   if (!identity) throw new Error('לא מחובר');
-  const user = await ctx.db
-    .query('users')
-    .withIndex('by_email', (q: any) => q.eq('email', identity.email ?? ''))
-    .unique();
   if (!user) return { reset: false };
   const now = Date.now();
   await ctx.db.patch(user._id, {
@@ -315,17 +356,7 @@ export const resetMyPostQuotaForDev = mutation({
 export const getCurrentUser = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      return null;
-    }
-
-    // חיפוש המשתמש ב-Database לפי כתובת האימייל מה-Identity
-    const user = await ctx.db
-      .query('users')
-      .withIndex('by_email', (q) => q.eq('email', identity.email ?? ''))
-      .unique();
-
+    const { user } = await getCurrentAuthUser(ctx);
     return user;
   },
 });
@@ -362,10 +393,8 @@ export const createOrUpdateUser = mutation({
     const now = Date.now();
 
     // בדיקה אם המשתמש כבר קיים
-    const existing = await ctx.db
-      .query('users')
-      .withIndex('by_email', (q) => q.eq('email', email))
-      .unique();
+    const subjectUser = await ctx.db.get(identity.subject as Id<'users'>);
+    const existing = subjectUser ?? (await findUserByEmail(ctx, email));
 
     const userData = {
       email,
@@ -418,16 +447,10 @@ export const updateUserType = mutation({
     userType: v.union(v.literal('free'), v.literal('paid')),
   },
   handler: async (ctx, { userType }) => {
-    const identity = await ctx.auth.getUserIdentity();
+    const { identity, user } = await getCurrentAuthUser(ctx);
     if (!identity) {
       throw new Error('לא מחובר למערכת');
     }
-
-    // חיפוש המשתמש לפי אימייל
-    const user = await ctx.db
-      .query('users')
-      .withIndex('by_email', (q) => q.eq('email', identity.email ?? ''))
-      .unique();
 
     if (!user) {
       throw new Error('משתמש לא נמצא');
@@ -501,13 +524,26 @@ export const deleteMyAccount = mutation({
       .collect();
     for (const doc of costs) await ctx.db.delete(doc._id);
 
-    // Delete user record (looked up by email, not by identity.subject)
+    // Delete durable generation jobs
+    const jobs = await ctx.db
+      .query('generationJobs')
+      .withIndex('by_userId', (q) => q.eq('userId', userId))
+      .collect();
+    for (const doc of jobs) await ctx.db.delete(doc._id);
+
+    // Delete the authenticated user row by subject first. If historical
+    // duplicate rows exist for the same email, delete only those matching the
+    // current email so quota cannot leak into a recreated account.
+    const subjectUser = await ctx.db.get(userId as Id<'users'>);
+    if (subjectUser) await ctx.db.delete(subjectUser._id);
     if (email) {
-      const user = await ctx.db
+      const emailRows = await ctx.db
         .query('users')
         .withIndex('by_email', (q) => q.eq('email', email))
-        .unique();
-      if (user) await ctx.db.delete(user._id);
+        .collect();
+      for (const user of emailRows) {
+        if (user._id !== subjectUser?._id) await ctx.db.delete(user._id);
+      }
     }
   },
 });

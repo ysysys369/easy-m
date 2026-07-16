@@ -152,6 +152,39 @@ export default defineSchema({
     createdAt: v.number(),
   }).index('by_userId', ['userId']),
 
+  generationJobs: defineTable({
+    userId: v.string(),
+    userEmail: v.optional(v.string()),
+    topic: v.string(),
+    idempotencyKey: v.string(),
+    status: v.union(
+      v.literal('processing'),
+      v.literal('completed'),
+      v.literal('failed')
+    ),
+    businessProfileSnapshot: v.any(),
+    postImageType: v.optional(
+      v.union(
+        v.literal('photo'),
+        v.literal('designed'),
+        v.literal('premium_ad')
+      )
+    ),
+    postId: v.optional(v.id('posts')),
+    imageUri: v.optional(v.string()),
+    captionText: v.optional(v.string()),
+    errorMessage: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    startedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    failedAt: v.optional(v.number()),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_userId_status', ['userId', 'status'])
+    .index('by_userId_idempotencyKey', ['userId', 'idempotencyKey'])
+    .index('by_userId_createdAt', ['userId', 'createdAt']),
+
   users: defineTable({
     email: v.string(),
     emailVerified: v.optional(v.boolean()),

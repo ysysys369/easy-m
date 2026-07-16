@@ -3,7 +3,8 @@ import { v } from 'convex/values';
 import type { Uploadable } from 'openai';
 import OpenAI, { toFile } from 'openai';
 import { api, internal } from './_generated/api';
-import { action } from './_generated/server';
+import type { Id } from './_generated/dataModel';
+import { action, internalAction, type ActionCtx } from './_generated/server';
 
 type PostImageType = 'photo' | 'designed' | 'premium_ad';
 type PostGoal =
@@ -1564,13 +1565,195 @@ async function generateImageWithOpenAI({
       errorMessage: rawMsg,
       innerMessage: innerMsg,
       apiKeyPresent: Boolean(openai.apiKey),
-      apiKeyPrefix:  openai.apiKey ? openai.apiKey.slice(0, 7) + '...' : null,
     });
 
     // Return null so the caller can still deliver the text post
     return null;
   }
 }
+
+async function saveGeneratedPostForClientRecovery(
+  ctx: ActionCtx,
+  {
+    captionText,
+    imageBase64,
+    businessName,
+    businessType,
+    userId,
+  }: {
+    captionText: string;
+    imageBase64: string;
+    businessName?: string;
+    businessType?: string;
+    userId?: string;
+  },
+): Promise<{ postId: Id<'posts'> | null; imageUrl: string | null }> {
+  if (!imageBase64.trim()) {
+    return { postId: null, imageUrl: null };
+  }
+
+  try {
+    const imageBytes = Buffer.from(imageBase64, 'base64');
+    const storageId = await ctx.storage.store(
+      new Blob([imageBytes], { type: 'image/png' }),
+    );
+    const imageUrl = await ctx.storage.getUrl(storageId);
+    if (!imageUrl) {
+      devWarn('[generatePost] generated image stored but URL resolution failed');
+      return { postId: null, imageUrl: null };
+    }
+
+    const postId = userId
+      ? await ctx.runMutation(internal.posts.createPostForUser, {
+          userId,
+          content: captionText,
+          captionText,
+          imageUri: imageUrl,
+          businessName,
+          businessType,
+          generationMode: 'auto',
+        })
+      : await ctx.runMutation(api.posts.createPost, {
+          content: captionText,
+          captionText,
+          imageUri: imageUrl,
+          businessName,
+          businessType,
+          generationMode: 'auto',
+        });
+
+    return { postId, imageUrl };
+  } catch (error) {
+    devWarn('[generatePost] failed to persist generated post for recovery', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { postId: null, imageUrl: null };
+  }
+}
+
+export const processGenerationJob = internalAction({
+  args: { jobId: v.id('generationJobs') },
+  handler: async (ctx, { jobId }) => {
+    const handlerStartedAt = Date.now();
+    const costAcc: CostAccumulator = { textCalls: [], imageCalls: [] };
+
+    const job = await ctx.runQuery(internal.generationJobs.getGenerationJobForProcessing, {
+      jobId,
+    });
+    if (!job || job.status !== 'processing') return;
+
+    await ctx.runMutation(internal.generationJobs.markGenerationJobStarted, {
+      jobId,
+    });
+
+    try {
+      const profile = job.businessProfileSnapshot as BusinessProfile;
+      if (!profile?.businessName) {
+        throw new Error('NO_BUSINESS_PROFILE');
+      }
+
+      const postImageType: PostImageType = profile.postImageType ?? 'premium_ad';
+      if (postImageType !== 'premium_ad') {
+        throw new Error('BACKGROUND_GENERATION_ONLY_SUPPORTS_PREMIUM_AD');
+      }
+
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) throw new Error('OPENAI_API_KEY is not configured');
+      const openai = new OpenAI({ apiKey });
+
+      const recentPosts = await ctx.runQuery(internal.posts.listRecentPostsForUser, {
+        userId: job.userId,
+        limit: 5,
+      });
+      const recentPostSummaries = recentPosts
+        .map((post) =>
+          String(post.captionText ?? post.content ?? '').replace(/\s+/g, ' ').trim(),
+        )
+        .filter(Boolean)
+        .map((caption, index) => `${index + 1}. ${caption.slice(0, 140)}`);
+
+      const [assetInsightClean, logoReferenceClean] = await Promise.all([
+        analyzeBrandAssets(openai, profile, costAcc),
+        fetchLogoAsUploadable(profile.logoUrl),
+      ]);
+
+      const cleanBrief = await generateCleanPremiumAdBrief(
+        openai,
+        profile,
+        job.topic.trim(),
+        assetInsightClean,
+        recentPostSummaries,
+        costAcc,
+      );
+
+      let cleanCaptionText = cleanBrief.caption;
+      if (cleanBrief.hashtags.length) {
+        cleanCaptionText += '\n\n' + cleanBrief.hashtags.join(' ');
+      }
+
+      const cleanImageBase64 = await generateImageWithOpenAI({
+        openai,
+        prompt: cleanBrief.imagePrompt,
+        role: 'complete_poster',
+        languageMode: 'hebrew',
+        logoFile: logoReferenceClean?.file ?? null,
+        styleReferenceFile: null,
+        acc: costAcc,
+      });
+
+      const cleanTotalMs = Date.now() - handlerStartedAt;
+      const cleanImageProduced = Boolean(cleanImageBase64 && cleanImageBase64.length > 0);
+      if (!cleanImageProduced) {
+        throw new Error('IMAGE_GENERATION_FAILED_USER_FRIENDLY');
+      }
+
+      const savedPost = await saveGeneratedPostForClientRecovery(ctx, {
+        captionText: cleanCaptionText,
+        imageBase64: cleanImageBase64 ?? '',
+        businessName: profile.businessName,
+        businessType: profile.businessType,
+        userId: job.userId,
+      });
+      if (!savedPost.postId || !savedPost.imageUrl) {
+        throw new Error('POST_SAVE_FAILED_AFTER_GENERATION');
+      }
+
+      const cleanCostSummary = summarizeCosts(costAcc);
+      await ctx.runMutation(internal.generationCosts.saveGenerationCost, {
+        userId: job.userId,
+        estimatedTotalUsd: cleanCostSummary.totalUsd,
+        estimatedTextUsd: cleanCostSummary.totalTextUsd,
+        estimatedImageUsd: cleanCostSummary.totalImageUsd,
+        textInputTokens: cleanCostSummary.totalTextInputTokens,
+        textOutputTokens: cleanCostSummary.totalTextOutputTokens,
+        textModels: cleanCostSummary.textModels,
+        imageModels: cleanCostSummary.imageModels,
+        qualityBoostEnabled: false,
+        postImageType,
+        totalGenerationMs: cleanTotalMs,
+      });
+
+      await ctx.runMutation(internal.users.incrementPostsGeneratedForUser, {
+        userId: job.userId,
+        email: job.userEmail,
+      });
+
+      await ctx.runMutation(internal.generationJobs.completeGenerationJob, {
+        jobId,
+        postId: savedPost.postId,
+        imageUri: savedPost.imageUrl,
+        captionText: cleanCaptionText,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'GENERATION_JOB_FAILED';
+      await ctx.runMutation(internal.generationJobs.failGenerationJob, {
+        jobId,
+        errorMessage: message,
+      });
+    }
+  },
+});
 
 // ─── Unified marketing brief (replaces caption + scene + creative plan calls) ──
 // One gpt-4o-mini call that returns caption, headline, optional subtitle, visual
@@ -2233,24 +2416,17 @@ function buildFallbackCleanImagePrompt(profile: NonNullable<BusinessProfile>): s
   const brandColors = profile.brandColors?.trim();
   const palette = brandColors || defaultPaletteForBusinessType(type);
   const logoLine = profile.logoUrl
-    ? 'A real business logo PNG is attached as image input — place it as the brand mark at the top of the dark panel, preserving its native transparency exactly (no white card, no rounded box, no opaque background behind it); keep it small and refined.'
-    : `A small uppercase brand mark "${name}" rendered as on-brand typography at the top of the dark panel with letter-spacing.`;
+    ? 'A real business logo PNG is attached as image input — integrate it naturally as the brand mark wherever the composition allows, preserving its native transparency exactly (no white card, no rounded box, no opaque background behind it); keep it small and refined; never duplicated.'
+    : `Include a small on-brand brand mark "${name}" placed where the composition allows.`;
   return (
     'Premium Israeli Instagram sponsored advertisement, square 1:1, professional agency-quality design. ' +
-    `Split-layout: a polished commercial photograph of a ${type} on the right 55%, and a soft gradient text panel on the left 45% styled to feel native to this business. ` +
+    `Create a polished marketing poster for a ${type} business. Let the composition emerge naturally from the subject and brand — choose whatever agency-appropriate layout serves this specific business best (for example: full-bleed hero with integrated typography, editorial layered layout, magazine-cover style, product-centric with breathing space, atmospheric lifestyle scene, or a considered graphic arrangement). Do NOT default to a rigid split of photo on one side and a solid text panel on the other. ` +
     `${logoLine} ` +
-    'Inside the panel: a large bold Hebrew headline "בדיוק בשבילכם" in high-contrast on-brand color; ' +
-    'a thin ornamental divider line with a center diamond in the brand accent color; ' +
-    'a smaller Hebrew subheadline "שירות מקצועי" in a soft on-brand secondary color; ' +
-    `a small Hebrew body line "${type}" in a low-contrast neutral; ` +
-    'a floating circular brand-accent offer badge with "מומלץ" in bold white, slightly rotated; ' +
-    'a full-width brand-accent CTA pill at the bottom with "לפרטים" in bold white; ' +
-    'a tiny Hebrew footer line with the business category. ' +
-    `Palette MUST be: ${palette}. Use it consistently across the panel, divider, badge and CTA. ` +
-    'Subtle glow around the frame in the brand accent color, never default-purple unless the brand actually calls for it. ' +
+    'Include a short bold Hebrew headline of 2–5 words that fits this business. A short subheadline, tagline, offer badge or CTA are all optional — add them only when they genuinely strengthen the design; do not stuff every element into every poster. ' +
+    `Palette MUST be: ${palette}. Use it cohesively across background, typography and any accents. ` +
     'Real Hebrew letters, strict right-to-left order. ' +
     'No duplicated text, no fake prices, no fake phone numbers, no QR codes. ' +
-    'Square 1:1, premium agency quality, photorealistic hero, polished typography.'
+    'Square 1:1, premium agency quality, photorealistic hero, polished typography, brand-driven palette.'
   );
 }
 
@@ -2320,7 +2496,7 @@ async function generateCleanPremiumAdBrief(
         {
           role: 'system',
           content:
-            'You are a senior Israeli creative director composing ONE focused image-generation prompt for a complete designed social media advertisement. The prompt is sent to OpenAI\'s image model and must produce a finished agency-grade poster with multiple text zones — never a photo with one headline. The design MUST feel authentic to THIS specific business: its real brand colors, its category, its tone, the look of its uploaded photos. Do NOT default to a generic dark/purple template. Return JSON only.',
+            'You are a senior Israeli creative director composing ONE focused image-generation prompt for a complete designed social media advertisement. The prompt is sent to OpenAI\'s image model and must produce a finished agency-grade poster. The design MUST feel authentic to THIS specific business: its real brand colors, its category, its tone, the look of its uploaded photos. Let the composition be chosen by the design brief — do NOT default to a rigid template such as photo-on-one-side + text-panel-on-the-other, and do NOT default to a generic dark/purple palette. Return JSON only.',
         },
         {
           role: 'user',
@@ -2351,27 +2527,19 @@ async function generateCleanPremiumAdBrief(
             '}\n' +
             '\n' +
             'IMAGE_PROMPT REQUIREMENTS — your image_prompt MUST include ALL of the following:\n' +
-            '1. Split-layout poster — a polished hero photograph on ONE side (right or left), and a soft gradient text panel on the OTHER side. The panel\'s background tone MUST come from the BUSINESS palette below, NOT a default dark color.\n' +
-            '2. ALL Hebrew text strings inlined naturally, writing the EXACT Hebrew words inside double quotes — not placeholders. Required text zones:\n' +
+            '1. Composition is up to the image model — pick whatever agency-appropriate layout genuinely serves this business and topic (examples of directions you can suggest include: full-bleed hero with integrated typography, editorial layered layout, magazine-cover style, product-centric with breathing space, atmospheric lifestyle scene, considered graphic arrangement). Do NOT lock the model into a fixed structure such as photo-on-one-side + text-panel-on-the-other, and do not prescribe rigid percentages, zones or grids. Vary compositions across different businesses and topics.\n' +
+            '2. A vivid description of the hero content specific to this business type — what is actually being sold or experienced. Real materials, textures, lighting, atmosphere.\n' +
+            '3. Hebrew text: include a bold short HEADLINE (2-5 Hebrew words). A short subheadline, tagline, offer badge or CTA are OPTIONAL — include them only when they genuinely strengthen the design. Do not stuff every element into every poster. Write the EXACT Hebrew words inside double quotes — not placeholders.\n' +
             (hasLogo
-              ? '   a. The attached business LOGO PNG, integrated as the small brand mark at the top of the panel — preserve its transparency exactly; no white card, no opaque box behind it.\n'
-              : `   a. Small uppercase brand-mark text reading the business name ("${businessName}") with letter-spacing at the top of the panel.\n`) +
-            '   b. Large bold Hebrew HEADLINE of 2-5 words in a high-contrast on-brand color\n' +
-            '   c. Thin ornamental divider line with a center diamond — use the brand accent color\n' +
-            '   d. Smaller bold Hebrew SUBHEADLINE of 2-6 words in a soft on-brand secondary color\n' +
-            '   e. Small Hebrew BODY line of 3-8 words in a low-contrast neutral\n' +
-            '   f. Floating circular gradient OFFER BADGE in the brand accent color with bold short Hebrew text of 1-3 words, slightly rotated\n' +
-            '   g. Full-width brand-accent CTA pill button at the bottom with bold short Hebrew CTA of 1-3 words in white\n' +
-            '   h. Tiny Hebrew FOOTER line at the very bottom (business name or category)\n' +
-            '3. A vivid description of the hero photograph content specific to this business type — what is actually being sold or experienced.\n' +
-            `4. COLOR PALETTE — derive directly from "Brand colors" above. If the user provided brand colors, USE THEM literally for the panel background, divider, badge, CTA glow and frame. If not provided, use a palette that fits the business type (suggested direction: ${defaultPaletteHint}). Do NOT default to deep black + purple unless the brand actually calls for it. The whole ad must visually feel like this specific brand.\n` +
-            '5. Subtle glow around the frame in the BRAND accent color (never default-purple unless it is the brand color).\n' +
-            '6. Hebrew text rules: real Hebrew letters (Unicode U+05D0–U+05EA), strict right-to-left order, no broken letters, no Latin substitutions inside Hebrew words.\n' +
-            '7. Forbid clause: duplicated text, ghost text, fake prices, fake percentages, fake phone numbers, fake URLs, fake addresses, QR codes.\n' +
+              ? '   a. The attached business LOGO PNG must be integrated naturally as the brand mark wherever the composition allows — preserve its transparency exactly; no white card, no opaque box behind it; small and refined; never duplicated.\n'
+              : `   a. Include a small on-brand brand mark reading "${businessName}" placed where the composition allows.\n`) +
+            `4. COLOR PALETTE — derive directly from "Brand colors" above. If the user provided brand colors, USE THEM literally as the poster palette. If not provided, use a palette that fits the business type (suggested direction: ${defaultPaletteHint}). Do NOT default to deep black + purple unless the brand actually calls for it. The whole ad must visually feel like this specific brand.\n` +
+            '5. Hebrew text rules: real Hebrew letters (Unicode U+05D0–U+05EA), strict right-to-left order, no broken letters, no Latin substitutions inside Hebrew words.\n' +
+            '6. Forbid clause: duplicated text, ghost text, fake prices, fake percentages, fake phone numbers, fake URLs, fake addresses, QR codes.\n' +
             (hasLogo
-              ? '8. Explicitly instruct the image model: "A real business logo PNG is attached as image input — integrate the actual attached logo as the brand mark; preserve its native transparency; never wrap it in a white card or opaque box; never invent a second fake logo."\n'
+              ? '7. Explicitly instruct the image model: "A real business logo PNG is attached as image input — integrate the actual attached logo as the brand mark; preserve its native transparency; never wrap it in a white card or opaque box; never invent a second fake logo."\n'
               : '') +
-            '9. End the paragraph with the literal sentence: "Square 1:1, premium agency quality, photorealistic hero, polished typography, brand-driven palette."\n' +
+            `${hasLogo ? '8' : '7'}. End the paragraph with the literal sentence: "Square 1:1, premium agency quality, photorealistic hero, polished typography, brand-driven palette."\n` +
             '\n' +
             'NEVER invent fake prices, percentages, phone numbers, URLs, addresses, or contact details. Choose short natural Israeli Hebrew copy that fits this business. The caption_hebrew should match the same campaign idea as the poster.',
         },
@@ -2427,6 +2595,7 @@ export const generateMarketingPost = action({
     visualStyle: CreativeVisualStyle | null;
     imageProvider: 'openai';
     generatedImageUrl: string | null;
+    savedPostId: string | null;
     compositionStrategy: CompositionStrategy;
   }> => {
     const handlerStartedAt = Date.now();
@@ -2632,6 +2801,14 @@ export const generateMarketingPost = action({
       // still surface the caption in the return shape but the user keeps
       // their free post / weekly slot so they can retry.
       const cleanImageProduced = Boolean(cleanImageBase64 && cleanImageBase64.length > 0);
+      const cleanSavedPost = cleanImageProduced
+        ? await saveGeneratedPostForClientRecovery(ctx, {
+            captionText: cleanCaptionText,
+            imageBase64: cleanImageBase64 ?? '',
+            businessName: profile.businessName,
+            businessType: profile.businessType,
+          })
+        : { postId: null, imageUrl: null };
       if (cleanImageProduced) {
         await ctx.runMutation(api.users.incrementPostsGenerated);
       } else {
@@ -2658,6 +2835,7 @@ export const generateMarketingPost = action({
         captionLength: cleanCaptionText.length,
         totalGenerationMs: cleanTotalMs,
         posterTextIsNull: true,
+        savedPostId: cleanSavedPost.postId,
       });
 
       return {
@@ -2670,7 +2848,8 @@ export const generateMarketingPost = action({
         creativeTemplate: null,
         visualStyle: null,
         imageProvider: 'openai' as const,
-        generatedImageUrl: null,
+        generatedImageUrl: cleanSavedPost.imageUrl,
+        savedPostId: cleanSavedPost.postId,
         compositionStrategy: 'complete_image' as const,
       };
     }
@@ -2947,11 +3126,18 @@ export const generateMarketingPost = action({
         visualStyle: postImageType === 'photo' ? null : brief.visualStyle,
         imageProvider: 'openai' as const,
         generatedImageUrl: null,
+        savedPostId: null,
         compositionStrategy,
       };
     }
 
     const imageBase64 = imageBase64OrNull;
+    const savedPost = await saveGeneratedPostForClientRecovery(ctx, {
+      captionText,
+      imageBase64,
+      businessName: profile.businessName,
+      businessType: profile.businessType,
+    });
     devInfo('✅ [generateMarketingPost] done', {
       IMAGE_PIPELINE_VERSION,
       postImageType,
@@ -3024,6 +3210,7 @@ export const generateMarketingPost = action({
       hasImage: Boolean(imageBase64),
       captionLength: captionText.length,
       totalGenerationMs: Date.now() - handlerStartedAt,
+      savedPostId: savedPost.postId,
     });
 
     return {
@@ -3036,7 +3223,8 @@ export const generateMarketingPost = action({
       creativeTemplate: null,
       visualStyle: postImageType === 'photo' ? null : brief.visualStyle,
       imageProvider: 'openai' as const,
-      generatedImageUrl: null,
+      generatedImageUrl: savedPost.imageUrl,
+      savedPostId: savedPost.postId,
       compositionStrategy,
     };
   },

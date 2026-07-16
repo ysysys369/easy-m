@@ -17,6 +17,7 @@ import type * as crons from "../crons.js";
 import type * as files from "../files.js";
 import type * as generatePost from "../generatePost.js";
 import type * as generationCosts from "../generationCosts.js";
+import type * as generationJobs from "../generationJobs.js";
 import type * as http from "../http.js";
 import type * as notifications from "../notifications.js";
 import type * as onboardingAnswers from "../onboardingAnswers.js";
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   files: typeof files;
   generatePost: typeof generatePost;
   generationCosts: typeof generationCosts;
+  generationJobs: typeof generationJobs;
   http: typeof http;
   notifications: typeof notifications;
   onboardingAnswers: typeof onboardingAnswers;

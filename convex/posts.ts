@@ -1,5 +1,5 @@
 import { v } from 'convex/values';
-import { mutation, query } from './_generated/server';
+import { internalMutation, internalQuery, mutation, query } from './_generated/server';
 
 const POST_RETENTION_DAYS = 30;
 const POST_RETENTION_MS = POST_RETENTION_DAYS * 24 * 60 * 60 * 1000;
@@ -46,6 +46,62 @@ export const createPost = mutation({
       status:    'draft',
       createdAt: Date.now(),
     });
+  },
+});
+
+export const createPostForUser = internalMutation({
+  args: {
+    userId: v.string(),
+    content: v.optional(v.string()),
+    captionText: v.optional(v.string()),
+    imageUri: v.optional(v.string()),
+    businessName: v.optional(v.string()),
+    businessType: v.optional(v.string()),
+    generationMode: v.optional(v.union(v.literal('auto'), v.literal('manual'))),
+  },
+  handler: async (
+    ctx,
+    { userId, content, captionText, imageUri, businessName, businessType, generationMode },
+  ) => {
+    const resolvedCaptionText = captionText ?? content;
+    if (!resolvedCaptionText?.trim()) throw new Error('חסר טקסט לפוסט');
+
+    return await ctx.db.insert('posts', {
+      userId,
+      content: resolvedCaptionText,
+      captionText: resolvedCaptionText,
+      imageUri,
+      businessName,
+      businessType,
+      generationMode,
+      status: 'draft',
+      createdAt: Date.now(),
+    });
+  },
+});
+
+export const listRecentPostsForUser = internalQuery({
+  args: {
+    userId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, { userId, limit }) => {
+    const cap = Math.max(1, Math.min(50, limit ?? 8));
+    const posts = await ctx.db
+      .query('posts')
+      .withIndex('by_userId', (q) => q.eq('userId', userId))
+      .order('desc')
+      .take(cap * 2);
+
+    return posts
+      .filter((post) => isPostWithinRetention(post.createdAt))
+      .slice(0, cap)
+      .map((post) => ({
+        _id: post._id,
+        content: post.content,
+        captionText: post.captionText ?? post.content,
+        createdAt: post.createdAt,
+      }));
   },
 });
 

@@ -1,4 +1,4 @@
-import { useAction, useMutation, useQuery } from 'convex/react';
+import { useAction, useConvex, useMutation, useQuery } from 'convex/react';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -43,6 +43,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { captureRef } from 'react-native-view-shot';
 import { LogoTopLeft } from '@/components/LogoTopLeft';
 import { api } from '@/convex/_generated/api';
+import type { Id } from '@/convex/_generated/dataModel';
 import { IS_DEV_MODE } from '@/config/appConfig';
 import { useDevUiOverride } from '@/contexts/DevUiOverrideContext';
 import { useRevenueCat } from '@/contexts/RevenueCatContext';
@@ -146,9 +147,34 @@ type GeneratedPost = {
   mode: GenerationMode;
   businessName?: string;
   businessType?: string;
+  generatedImageUrl?: string | null;
+  savedPostId?: string | null;
   // complete_image means the backend returned a final poster image from
   // OpenAI Image API. The app displays/saves it raw.
   compositionStrategy?: CompositionStrategy;
+};
+
+type RecoverablePost = {
+  _id: string;
+  imageUri?: string;
+  captionText?: string;
+  content?: string;
+  createdAt: number;
+};
+
+type GenerationJob = {
+  _id: Id<'generationJobs'>;
+  status: 'processing' | 'completed' | 'failed';
+  topic: string;
+  postId?: Id<'posts'>;
+  imageUri?: string;
+  captionText?: string;
+  errorMessage?: string;
+  createdAt: number;
+  updatedAt: number;
+  startedAt?: number;
+  completedAt?: number;
+  failedAt?: number;
 };
 
 type SavedGeneratedPost = {
@@ -2824,6 +2850,7 @@ function ShareMiniButton({
 // ─── מסך ראשי ────────────────────────────────────────────────────────────────
 export default function CreateScreen() {
   const router = useRouter();
+  const convex = useConvex();
   // When the user lands here from a Weekly AI Suggestion card, the suggestion
   // description arrives as a `topic` route param so the input is pre-filled.
   const params = useLocalSearchParams<{ topic?: string }>();
@@ -2861,6 +2888,7 @@ export default function CreateScreen() {
   // undefined = still loading; do NOT default until we know the real value
   const weeklyStatus = useQuery(api.users.getWeeklyPostStatus);
   const businessProfile = useQuery(api.businessProfiles.getMyBusinessProfile);
+  const latestGenerationJob = useQuery(api.generationJobs.getMyLatestGenerationJob);
   const hasBusinessProfile =
     businessProfile !== undefined &&
     businessProfile !== null &&
@@ -2892,9 +2920,108 @@ export default function CreateScreen() {
 
 
   const createPost = useMutation(api.posts.createPost);
+  const createGenerationJob = useMutation(api.generationJobs.createGenerationJob);
   const generateMarketingPost = useAction(
     api.generatePost.generateMarketingPost
   );
+  const handledGenerationJobRef = useRef<string | null>(null);
+
+  const recoverLatestCreatedPost = async (
+    generationStartedAt: number,
+  ): Promise<RecoverablePost | null> => {
+    const recoveryWindowStart = generationStartedAt - 20 * 60 * 1000;
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const posts = (await convex.query(api.posts.getUserPosts, {})) as RecoverablePost[];
+      const latestPost = posts.find(
+        (post) =>
+          post.createdAt >= recoveryWindowStart &&
+          Boolean(post.imageUri) &&
+          Boolean((post.captionText ?? post.content ?? '').trim()),
+      );
+
+      if (latestPost) {
+        return latestPost;
+      }
+
+      await wait(1500);
+    }
+
+    return null;
+  };
+
+  const waitForGenerationJob = async (
+    jobId: Id<'generationJobs'>,
+  ): Promise<GenerationJob> => {
+    for (;;) {
+      const job = (await convex.query(api.generationJobs.getGenerationJob, {
+        jobId,
+      })) as GenerationJob | null;
+
+      if (!job) {
+        throw new Error('GENERATION_JOB_NOT_FOUND');
+      }
+
+      if (job.status === 'completed' || job.status === 'failed') {
+        return job;
+      }
+
+      await wait(2500);
+    }
+  };
+
+  const showCompletedJob = (message?: string) => {
+    setFinishedAt(Date.now());
+    window.setTimeout(() => {
+      setLoading(false);
+      router.push('/(authenticated)/page2');
+      Alert.alert(
+        'הפוסט נוצר ונשמר',
+        message ?? 'הפוסט מוכן ונמצא במסך הפוסטים שלך.',
+      );
+    }, 750);
+    scheduleAfterGenerationNotification().catch(() => {});
+  };
+
+  useEffect(() => {
+    const job = latestGenerationJob as GenerationJob | null | undefined;
+    if (!job || handledGenerationJobRef.current === job._id) return;
+
+    if (job.status === 'completed' && job.postId) {
+      handledGenerationJobRef.current = job._id;
+      showCompletedJob('הפוסט מוכן ונמצא במסך הפוסטים שלך.');
+      return;
+    }
+
+    if (job.status === 'failed') {
+      handledGenerationJobRef.current = job._id;
+      setLoading(false);
+      setFinishedAt(null);
+      Alert.alert('שגיאה', 'לא הצלחנו ליצור פוסט כרגע, נסה שוב בעוד רגע.');
+      return;
+    }
+
+    if (job.status === 'processing') {
+      handledGenerationJobRef.current = job._id;
+      setLoading(true);
+      setFinishedAt(null);
+      setGeneratedPost(null);
+      waitForGenerationJob(job._id)
+        .then((completedJob) => {
+          if (completedJob.status === 'completed' && completedJob.postId) {
+            showCompletedJob('הפוסט מוכן ונמצא במסך הפוסטים שלך.');
+            return;
+          }
+          throw new Error(completedJob.errorMessage ?? 'GENERATION_JOB_FAILED');
+        })
+        .catch(() => {
+          setLoading(false);
+          setFinishedAt(null);
+          Alert.alert('שגיאה', 'לא הצלחנו ליצור פוסט כרגע, נסה שוב בעוד רגע.');
+        });
+    }
+  }, [latestGenerationJob?._id, latestGenerationJob?.status]);
+
   const btnScale = useRef(new Animated.Value(1)).current;
   const btnIn = () =>
     Animated.spring(btnScale, {
@@ -2936,7 +3063,32 @@ export default function CreateScreen() {
     setLoading(true);
     setFinishedAt(null);
     setGeneratedPost(null);
+    const generationStartedAt = Date.now();
     try {
+      const activePostImageType =
+        (businessProfile?.postImageType as PostImageType | undefined) ?? 'premium_ad';
+
+      if (activePostImageType === 'premium_ad') {
+        const job = (await createGenerationJob({
+          topic,
+          idempotencyKey: `${generationStartedAt}-${Math.random().toString(36).slice(2)}`,
+        })) as GenerationJob;
+
+        handledGenerationJobRef.current = job._id;
+
+        const completedJob =
+          job.status === 'completed' || job.status === 'failed'
+            ? job
+            : await waitForGenerationJob(job._id);
+
+        if (completedJob.status === 'completed' && completedJob.postId) {
+          showCompletedJob('הפוסט מוכן ונמצא במסך הפוסטים שלך.');
+          return;
+        }
+
+        throw new Error(completedJob.errorMessage ?? 'GENERATION_JOB_FAILED');
+      }
+
       const result = await generateMarketingPost({ topic });
       setGeneratedPost({
         ...result,
@@ -2952,6 +3104,10 @@ export default function CreateScreen() {
         mode,
         businessName: businessProfile?.businessName,
         businessType: businessProfile?.businessType,
+        generatedImageUrl:
+          (result as { generatedImageUrl?: string | null }).generatedImageUrl ?? null,
+        savedPostId:
+          (result as { savedPostId?: string | null }).savedPostId ?? null,
         compositionStrategy:
           (result as { compositionStrategy?: CompositionStrategy })
             .compositionStrategy ??
@@ -2978,12 +3134,26 @@ export default function CreateScreen() {
       // Done — `finally` only runs on the error path now.
       return;
     } catch (err: unknown) {
+      const msg = String(err);
+      const recoveredPost = await recoverLatestCreatedPost(generationStartedAt);
+      if (recoveredPost) {
+        setFinishedAt(Date.now());
+        window.setTimeout(() => {
+          setLoading(false);
+          router.push('/(authenticated)/page2');
+          Alert.alert(
+            'הפוסט נוצר ונשמר',
+            'החיבור חזר לפני שקיבלנו את התצוגה המקדימה, אבל הפוסט נשמר ונמצא במסך הפוסטים שלך.',
+          );
+        }, 750);
+        scheduleAfterGenerationNotification().catch(() => {});
+        return;
+      }
+
       // Failure haptic so the user feels the result even before reading the alert.
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(
         () => {}
       );
-
-      const msg = String(err);
 
       const GENERIC_FAILURE_TITLE = 'שגיאה';
       const GENERIC_FAILURE_MESSAGE =
@@ -3030,6 +3200,10 @@ export default function CreateScreen() {
     businessType,
   }: SavedGeneratedPost) => {
     if (!captionText.trim() || isSaving) return;
+    if (generatedPost?.savedPostId) {
+      Alert.alert('✅', 'הפוסט כבר נשמר במסך הפוסטים שלך');
+      return;
+    }
     setIsSaving(true);
     try {
       await createPost({
