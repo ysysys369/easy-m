@@ -1,5 +1,4 @@
 import { v } from 'convex/values';
-import type { Id } from './_generated/dataModel';
 import { internalMutation, mutation, query } from './_generated/server';
 
 // ─── Post limit config ───────────────────────────────────────────────────────
@@ -31,12 +30,23 @@ function effectiveWeeklyUsed(user: { postsUsedThisWeek?: number; lastResetDate?:
   };
 }
 
+function normalizeEmail(email: string | undefined | null): string {
+  return (email ?? '').trim().toLowerCase();
+}
+
 async function findUserByEmail(ctx: { db: any }, email: string) {
-  if (!email) return null;
-  const rows = await ctx.db
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return null;
+  const exactRows = await ctx.db
     .query('users')
-    .withIndex('by_email', (q: any) => q.eq('email', email))
+    .withIndex('by_email', (q: any) => q.eq('email', normalizedEmail))
     .collect();
+  const rows =
+    exactRows.length > 0
+      ? exactRows
+      : (await ctx.db.query('users').collect()).filter(
+          (user: any) => normalizeEmail(user.email) === normalizedEmail,
+        );
   if (rows.length === 0) return null;
   return rows.reduce((best: any, row: any) =>
     (row.updatedAt ?? row.createdAt ?? 0) > (best.updatedAt ?? best.createdAt ?? 0)
@@ -49,10 +59,7 @@ async function getCurrentAuthUser(ctx: { db: any; auth: any }) {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) return { identity: null, user: null };
 
-  const subjectUser = await ctx.db.get(identity.subject as Id<'users'>);
-  if (subjectUser) return { identity, user: subjectUser };
-
-  const emailUser = await findUserByEmail(ctx, identity.email ?? '');
+  const emailUser = await findUserByEmail(ctx, identity.email);
   return { identity, user: emailUser };
 }
 
@@ -63,7 +70,8 @@ async function getOrCreateUserByIdentity(
 ): Promise<{ _id: any }> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) throw new Error('לא מחובר');
-  const email = identity.email ?? '';
+  const email = normalizeEmail(identity.email);
+  if (!email) throw new Error('MISSING_AUTH_EMAIL');
   const now = Date.now();
   const { user: existing } = await getCurrentAuthUser(ctx);
   if (existing) return existing;
@@ -186,10 +194,10 @@ export const syncSubscriptionStatus = mutation({
       });
       return;
     }
-    const email = identity.email ?? '';
+    const email = normalizeEmail(identity.email);
+    if (!email) throw new Error('MISSING_AUTH_EMAIL');
     const now = Date.now();
-    const subjectUser = await ctx.db.get(identity.subject as Id<'users'>);
-    const user = subjectUser ?? (await findUserByEmail(ctx, email));
+    const user = await findUserByEmail(ctx, email);
     const newUserType = isPremium ? 'paid' : 'free';
     if (user) {
       const changed = user.userType !== newUserType;
@@ -252,7 +260,8 @@ export const incrementPostsGenerated = mutation({
   handler: async (ctx) => {
     const { identity, user } = await getCurrentAuthUser(ctx);
     if (!identity) throw new Error('לא מחובר');
-    const email = identity.email ?? '';
+    const email = normalizeEmail(identity.email);
+    if (!email) throw new Error('MISSING_AUTH_EMAIL');
     const now = Date.now();
 
     if (user) {
@@ -290,11 +299,12 @@ export const incrementPostsGeneratedForUser = internalMutation({
     email: v.optional(v.string()),
   },
   handler: async (ctx, { userId, email }) => {
+    void userId;
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail) throw new Error('MISSING_USER_EMAIL');
     const now = Date.now();
 
-    const user =
-      (await ctx.db.get(userId as Id<'users'>)) ??
-      (await findUserByEmail(ctx, email?.trim() ?? ''));
+    const user = await findUserByEmail(ctx, normalizedEmail);
 
     if (user) {
       const { used } = effectiveWeeklyUsed(user, now);
@@ -309,7 +319,7 @@ export const incrementPostsGeneratedForUser = internalMutation({
     }
 
     return await ctx.db.insert('users', {
-      email: email?.trim() ?? '',
+      email: normalizedEmail,
       emailVerified: false,
       fullName: 'User',
       role: 'user',
@@ -389,19 +399,18 @@ export const createOrUpdateUser = mutation({
       throw new Error('Not authenticated');
     }
 
-    const email = identity.email ?? '';
+    const email = normalizeEmail(identity.email);
+    if (!email) throw new Error('MISSING_AUTH_EMAIL');
     const now = Date.now();
 
     // בדיקה אם המשתמש כבר קיים
-    const subjectUser = await ctx.db.get(identity.subject as Id<'users'>);
-    const existing = subjectUser ?? (await findUserByEmail(ctx, email));
+    const existing = await findUserByEmail(ctx, email);
 
     const userData = {
       email,
       emailVerified: identity.emailVerified ?? false,
       fullName: identity.name || identity.nickname || 'User',
       role: 'user' as const,
-      userType: 'free' as const, // ברירת מחדל - משתמש חינמי
       isActive: true,
       updatedAt: now,
     };
@@ -415,6 +424,9 @@ export const createOrUpdateUser = mutation({
     // יצירת משתמש חדש
     return await ctx.db.insert('users', {
       ...userData,
+      userType: 'free',
+      postsGenerated: 0,
+      postsUsedThisWeek: 0,
       createdAt: now,
     });
   },
@@ -487,7 +499,7 @@ export const deleteMyAccount = mutation({
     if (!identity) throw new Error('לא מחובר למערכת');
 
     const userId = identity.subject;
-    const email = identity.email ?? '';
+    const email = normalizeEmail(identity.email);
 
     // Delete posts
     const posts = await ctx.db
@@ -531,18 +543,15 @@ export const deleteMyAccount = mutation({
       .collect();
     for (const doc of jobs) await ctx.db.delete(doc._id);
 
-    // Delete the authenticated user row by subject first. If historical
-    // duplicate rows exist for the same email, delete only those matching the
-    // current email so quota cannot leak into a recreated account.
-    const subjectUser = await ctx.db.get(userId as Id<'users'>);
-    if (subjectUser) await ctx.db.delete(subjectUser._id);
+    // Delete custom user rows matching this normalized email. Auth subject is
+    // not a guaranteed users table ID in production, so never pass it to db.get.
     if (email) {
       const emailRows = await ctx.db
         .query('users')
         .withIndex('by_email', (q) => q.eq('email', email))
         .collect();
       for (const user of emailRows) {
-        if (user._id !== subjectUser?._id) await ctx.db.delete(user._id);
+        await ctx.db.delete(user._id);
       }
     }
   },

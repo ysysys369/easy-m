@@ -1,6 +1,10 @@
 import { Password } from '@convex-dev/auth/providers/Password';
 import { convexAuth } from '@convex-dev/auth/server';
 
+function normalizeEmail(email: string | undefined | null): string {
+  return (email ?? '').trim().toLowerCase();
+}
+
 // הגדרת מערכת האימות (Authentication)
 // קובץ זה מגדיר את ספקי ההזדהות והלוגיקה של יצירת משתמשים
 export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
@@ -11,7 +15,7 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
   callbacks: {
     async createOrUpdateUser(ctx, args) {
       const now = Date.now();
-      const email = args.profile.email ?? '';
+      const email = normalizeEmail(args.profile.email);
 
       if (args.existingUserId) {
         await ctx.db.patch(args.existingUserId, {
@@ -24,7 +28,9 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
       }
 
       const existingUser = email
-        ? (await ctx.db.query('users').collect()).find((user) => user.email === email)
+        ? (await ctx.db.query('users').collect()).find(
+            (user) => normalizeEmail(user.email) === email,
+          )
         : null;
 
       if (existingUser) {
@@ -41,7 +47,10 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
         emailVerified: args.profile.emailVerified ?? false,
         fullName: args.profile.name || 'User',
         role: 'user',
+        userType: 'free',
         isActive: true,
+        postsGenerated: 0,
+        postsUsedThisWeek: 0,
         createdAt: now,
         updatedAt: now,
       });

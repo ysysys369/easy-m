@@ -1,6 +1,6 @@
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
-import type { Doc, Id } from './_generated/dataModel';
+import type { Doc } from './_generated/dataModel';
 import { internalMutation, internalQuery, mutation, query } from './_generated/server';
 
 const WEEKLY_POST_LIMIT = 3;
@@ -31,6 +31,31 @@ function hasQuota(user: Doc<'users'> | null, now: number): boolean {
   return FREE_POST_LIMIT - (user?.postsGenerated ?? 0) > 0;
 }
 
+function normalizeEmail(email: string | undefined | null): string {
+  return (email ?? '').trim().toLowerCase();
+}
+
+async function findUserByEmail(ctx: { db: any }, email: string) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return null;
+  const exactRows = await ctx.db
+    .query('users')
+    .withIndex('by_email', (q: any) => q.eq('email', normalizedEmail))
+    .collect();
+  const rows =
+    exactRows.length > 0
+      ? exactRows
+      : (await ctx.db.query('users').collect()).filter(
+          (user: any) => normalizeEmail(user.email) === normalizedEmail,
+        );
+  if (rows.length === 0) return null;
+  return rows.reduce((best: any, row: any) =>
+    (row.updatedAt ?? row.createdAt ?? 0) > (best.updatedAt ?? best.createdAt ?? 0)
+      ? row
+      : best,
+  );
+}
+
 function publicJob(job: Doc<'generationJobs'>) {
   return {
     _id: job._id,
@@ -58,7 +83,7 @@ export const createGenerationJob = mutation({
     if (!identity) throw new Error('לא מחובר');
 
     const userId = identity.subject;
-    const userEmail = identity.email ?? '';
+    const userEmail = normalizeEmail(identity.email);
     const now = Date.now();
     const normalizedTopic = topic.trim();
 
@@ -95,7 +120,7 @@ export const createGenerationJob = mutation({
       return publicJob(latestJob);
     }
 
-    const user = await ctx.db.get(userId as Id<'users'>);
+    const user = await findUserByEmail(ctx, userEmail);
     if (!hasQuota(user, now)) {
       throw new Error('WEEKLY_LIMIT_REACHED');
     }
