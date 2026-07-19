@@ -480,7 +480,7 @@ export default function BusinessProfile() {
       case 5:
         return profile.style.length > 0;
       case 6:
-        return profile.city.trim().length > 0;
+        return true;
       case 7:
         return isValidUrl(profile.website);
       case 8:
@@ -782,8 +782,8 @@ export default function BusinessProfile() {
               )}
               {step === 6 && (
                 <TextStep
-                  title="באיזה עיר / אזור?"
-                  placeholder="תל אביב, מרכז..."
+                  title="מה הכתובת המדויקת של העסק?"
+                  placeholder="לדוגמה: הרצל 10, תל אביב"
                   value={profile.city}
                   onChange={(v) => update('city', v)}
                 />

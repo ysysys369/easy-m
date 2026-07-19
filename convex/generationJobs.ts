@@ -94,6 +94,46 @@ function publicJob(job: Doc<'generationJobs'>) {
   };
 }
 
+async function collectBusinessProfilesForGeneration(
+  ctx: { db: any },
+  stableUserId: string | null,
+  legacySubject: string,
+): Promise<Doc<'businessProfiles'>[]> {
+  const byId = new Map<string, Doc<'businessProfiles'>>();
+  const addRows = (rows: Doc<'businessProfiles'>[]) => {
+    for (const row of rows) byId.set(row._id, row);
+  };
+
+  if (stableUserId) {
+    addRows(
+      await ctx.db
+        .query('businessProfiles')
+        .withIndex('by_userId', (q: any) => q.eq('userId', stableUserId))
+        .collect(),
+    );
+  }
+
+  addRows(
+    await ctx.db
+      .query('businessProfiles')
+      .withIndex('by_userId', (q: any) => q.eq('userId', legacySubject))
+      .collect(),
+  );
+
+  if (byId.size === 0 && stableUserId) {
+    addRows(
+      (await ctx.db.query('businessProfiles').collect()).filter(
+        (row: Doc<'businessProfiles'>) =>
+          row.userId === stableUserId ||
+          row.userId === legacySubject ||
+          row.userId.startsWith(`${stableUserId}|`),
+      ),
+    );
+  }
+
+  return [...byId.values()];
+}
+
 export const createGenerationJob = mutation({
   args: {
     topic: v.string(),
@@ -168,10 +208,12 @@ export const createGenerationJob = mutation({
       return publicJob(latestJob);
     }
 
-    const profiles = await ctx.db
-      .query('businessProfiles')
-      .withIndex('by_userId', (q) => q.eq('userId', userId))
-      .collect();
+    const stableUserId = user?._id ? String(user._id) : null;
+    const profiles = await collectBusinessProfilesForGeneration(
+      ctx,
+      stableUserId,
+      userId,
+    );
     const profile = profiles.reduce<Doc<'businessProfiles'> | null>(
       (best, candidate) =>
         !best || (candidate.updatedAt ?? 0) > (best.updatedAt ?? 0)

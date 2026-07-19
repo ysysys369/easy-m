@@ -1,3 +1,4 @@
+import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import { internalMutation, internalQuery, mutation, query } from './_generated/server';
 
@@ -8,13 +9,73 @@ function isPostWithinRetention(createdAt: number, now = Date.now()): boolean {
   return now - createdAt <= POST_RETENTION_MS;
 }
 
+type Owner = {
+  userId: string;
+  legacySubject: string;
+};
+
+async function getOwner(ctx: { auth: any }): Promise<Owner | null> {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity || typeof identity !== 'object' || !('subject' in identity)) {
+    return null;
+  }
+  const authUserId = await getAuthUserId(ctx);
+  if (!authUserId) return null;
+  return {
+    userId: String(authUserId),
+    legacySubject: (identity as { subject: string }).subject,
+  };
+}
+
+function ownerMatches(userId: string, owner: Owner): boolean {
+  return (
+    userId === owner.userId ||
+    userId === owner.legacySubject ||
+    userId.startsWith(`${owner.userId}|`)
+  );
+}
+
+async function collectPostsForOwner(ctx: { db: any }, owner: Owner) {
+  const byId = new Map<string, any>();
+  const addRows = (rows: any[]) => {
+    for (const row of rows) byId.set(row._id, row);
+  };
+
+  addRows(
+    await ctx.db
+      .query('posts')
+      .withIndex('by_userId', (q: any) => q.eq('userId', owner.userId))
+      .order('desc')
+      .collect(),
+  );
+
+  if (owner.legacySubject !== owner.userId) {
+    addRows(
+      await ctx.db
+        .query('posts')
+        .withIndex('by_userId', (q: any) => q.eq('userId', owner.legacySubject))
+        .order('desc')
+        .collect(),
+    );
+  }
+
+  if (byId.size === 0) {
+    const legacyRows = (await ctx.db.query('posts').collect()).filter((post: { userId: string }) =>
+      ownerMatches(post.userId, owner),
+    );
+    addRows(legacyRows);
+  }
+
+  return [...byId.values()].sort((a, b) => b.createdAt - a.createdAt);
+}
+
 export const deletePost = mutation({
   args: { id: v.id('posts') },
   handler: async (ctx, { id }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error('לא מחובר למערכת');
+    const owner = await getOwner(ctx);
+    if (!owner) throw new Error('לא מחובר למערכת');
     const post = await ctx.db.get(id);
-    if (!post || post.userId !== identity.subject) throw new Error('אין הרשאה');
+    if (!post || !ownerMatches(post.userId, owner)) throw new Error('אין הרשאה');
     await ctx.db.delete(id);
   },
 });
@@ -29,14 +90,14 @@ export const createPost = mutation({
     generationMode: v.optional(v.union(v.literal('auto'), v.literal('manual'))),
   },
   handler: async (ctx, { content, captionText, imageUri, businessName, businessType, generationMode }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error('לא מחובר למערכת');
+    const owner = await getOwner(ctx);
+    if (!owner) throw new Error('לא מחובר למערכת');
 
     const resolvedCaptionText = captionText ?? content;
     if (!resolvedCaptionText?.trim()) throw new Error('חסר טקסט לפוסט');
 
     return await ctx.db.insert('posts', {
-      userId:    identity.subject,
+      userId:    owner.userId,
       content:   resolvedCaptionText,
       captionText: resolvedCaptionText,
       imageUri,
@@ -87,11 +148,16 @@ export const listRecentPostsForUser = internalQuery({
   },
   handler: async (ctx, { userId, limit }) => {
     const cap = Math.max(1, Math.min(50, limit ?? 8));
-    const posts = await ctx.db
-      .query('posts')
-      .withIndex('by_userId', (q) => q.eq('userId', userId))
-      .order('desc')
-      .take(cap * 2);
+    const ownerPrefix = userId.split('|')[0] ?? userId;
+    const posts = (await ctx.db.query('posts').collect())
+      .filter(
+        (post: { userId: string }) =>
+          post.userId === userId ||
+          post.userId === ownerPrefix ||
+          post.userId.startsWith(`${ownerPrefix}|`),
+      )
+      .sort((a: { createdAt: number }, b: { createdAt: number }) => b.createdAt - a.createdAt)
+      .slice(0, cap * 2);
 
     return posts
       .filter((post) => isPostWithinRetention(post.createdAt))
@@ -110,15 +176,11 @@ export const listRecentPostsForUser = internalQuery({
 export const listMyRecentPosts = query({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
+    const owner = await getOwner(ctx);
+    if (!owner) return [];
 
     const cap = Math.max(1, Math.min(50, limit ?? 8));
-    const posts = await ctx.db
-      .query('posts')
-      .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
-      .order('desc')
-      .take(cap * 2);
+    const posts = (await collectPostsForOwner(ctx, owner)).slice(0, cap * 2);
 
     return posts
       .filter((post) => isPostWithinRetention(post.createdAt))
@@ -135,14 +197,10 @@ export const listMyRecentPosts = query({
 export const getUserPosts = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
+    const owner = await getOwner(ctx);
+    if (!owner) return [];
 
-    const posts = await ctx.db
-      .query('posts')
-      .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
-      .order('desc')
-      .collect();
+    const posts = await collectPostsForOwner(ctx, owner);
 
     return posts
       .filter((post) => isPostWithinRetention(post.createdAt))

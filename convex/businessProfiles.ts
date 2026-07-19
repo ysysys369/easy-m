@@ -1,5 +1,6 @@
+import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
-import type { Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import { mutation, query } from './_generated/server';
 
 const imageLabelValidator = v.union(
@@ -191,28 +192,148 @@ function pickLatest<T extends { updatedAt: number; _id: string }>(
   );
 }
 
+type AuthenticatedOwner = {
+  identity: { subject: string };
+  userId: string;
+  legacySubject: string;
+};
+
+async function getAuthenticatedOwner(ctx: {
+  auth: any;
+}): Promise<AuthenticatedOwner | null> {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity || typeof identity !== 'object' || !('subject' in identity)) {
+    return null;
+  }
+  const authUserId = await getAuthUserId(ctx);
+  if (!authUserId) return null;
+  const legacySubject = (identity as { subject: string }).subject;
+  return {
+    identity: { subject: legacySubject },
+    userId: String(authUserId),
+    legacySubject,
+  };
+}
+
+function ownerMatches(userId: string, owner: AuthenticatedOwner): boolean {
+  return (
+    userId === owner.userId ||
+    userId === owner.legacySubject ||
+    userId.startsWith(`${owner.userId}|`)
+  );
+}
+
+async function collectBusinessProfilesForOwner(
+  ctx: { db: any },
+  owner: AuthenticatedOwner,
+): Promise<Doc<'businessProfiles'>[]> {
+  const byId = new Map<string, Doc<'businessProfiles'>>();
+  const addRows = (rows: Doc<'businessProfiles'>[]) => {
+    for (const row of rows) byId.set(row._id, row);
+  };
+
+  addRows(
+    await ctx.db
+      .query('businessProfiles')
+      .withIndex('by_userId', (q: any) => q.eq('userId', owner.userId))
+      .collect(),
+  );
+
+  if (owner.legacySubject !== owner.userId) {
+    addRows(
+      await ctx.db
+        .query('businessProfiles')
+        .withIndex('by_userId', (q: any) => q.eq('userId', owner.legacySubject))
+        .collect(),
+    );
+  }
+
+  if (byId.size === 0) {
+    const legacyRows = (await ctx.db.query('businessProfiles').collect()).filter(
+      (row: Doc<'businessProfiles'>) => ownerMatches(row.userId, owner),
+    );
+    addRows(legacyRows);
+  }
+
+  return [...byId.values()];
+}
+
+async function migrateBusinessProfilesToOwner(
+  ctx: { db: any },
+  owner: AuthenticatedOwner,
+  rows: Doc<'businessProfiles'>[],
+): Promise<Doc<'businessProfiles'> | null> {
+  const latest = pickLatest(rows);
+  if (!latest) return null;
+
+  if (latest.userId !== owner.userId) {
+    await ctx.db.patch(latest._id, {
+      userId: owner.userId,
+      updatedAt: latest.updatedAt ?? Date.now(),
+    });
+  }
+
+  for (const row of rows) {
+    if (row._id !== latest._id) {
+      await ctx.db.delete(row._id);
+    }
+  }
+
+  return { ...latest, userId: owner.userId };
+}
+
 export const getFullUserProfile = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return null;
-    const userId = identity.subject;
+    const owner = await getAuthenticatedOwner(ctx);
+    if (!owner) return null;
 
-    const [allProfiles, onboardingAnswers] = await Promise.all([
-      ctx.db
-        .query('businessProfiles')
-        .withIndex('by_userId', (q) => q.eq('userId', userId))
-        .collect(),
-      ctx.db
-        .query('onboardingAnswers')
-        .withIndex('by_userId', (q) => q.eq('userId', userId))
-        .unique(),
-    ]);
+    const allProfiles = await collectBusinessProfilesForOwner(ctx, owner);
+    const onboardingRows = await ctx.db.query('onboardingAnswers').collect();
+    const onboardingAnswers = onboardingRows
+      .filter((row: { userId: string }) => ownerMatches(row.userId, owner))
+      .sort(
+        (a: { updatedAt?: number; createdAt: number }, b: { updatedAt?: number; createdAt: number }) =>
+          (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0),
+      )[0] ?? null;
 
     const businessProfile = pickLatest(allProfiles);
     return { businessProfile, onboardingAnswers };
   },
 });
+
+async function deleteCurrentWeekSuggestionsForOwner(
+  ctx: { db: any },
+  owner: AuthenticatedOwner,
+) {
+  const weekStart = getCurrentWeekStart();
+  const allRows = await ctx.db
+    .query('aiSuggestions')
+    .withIndex('by_userId_and_weekStart', (q: any) =>
+      q.eq('userId', owner.userId).eq('weekStartAt', weekStart),
+    )
+    .collect();
+  const legacyRows =
+    owner.legacySubject === owner.userId
+      ? []
+      : await ctx.db
+          .query('aiSuggestions')
+          .withIndex('by_userId_and_weekStart', (q: any) =>
+            q.eq('userId', owner.legacySubject).eq('weekStartAt', weekStart),
+          )
+          .collect();
+  const extraLegacyRows = (await ctx.db.query('aiSuggestions').collect()).filter(
+    (row: { userId: string; weekStartAt: number }) =>
+      row.weekStartAt === weekStart && ownerMatches(row.userId, owner),
+  );
+  const byId = new Map<string, { _id: Id<'aiSuggestions'> }>();
+  for (const row of [...allRows, ...legacyRows, ...extraLegacyRows]) {
+    byId.set(row._id, row);
+  }
+  for (const row of byId.values()) {
+    await ctx.db.delete(row._id);
+  }
+}
 
 function getCurrentWeekStart(): number {
   const d = new Date();
@@ -250,11 +371,11 @@ export const saveBusinessProfile = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
+    const owner = await getAuthenticatedOwner(ctx);
+    if (!owner) {
       throw new Error('לא מחובר למערכת');
     }
-    const userId = identity.subject;
+    const userId = owner.userId;
     const now = Date.now();
 
     const normalizedWebsite = sanitizeOptionalString(
@@ -264,19 +385,8 @@ export const saveBusinessProfile = mutation({
     // Use .collect() instead of .unique() so the mutation is resilient to
     // duplicate rows. Pick the most recent row as the canonical profile and
     // delete any extras atomically within this transaction.
-    const allExisting = await ctx.db
-      .query('businessProfiles')
-      .withIndex('by_userId', (q) => q.eq('userId', userId))
-      .collect();
-
-    const existing = pickLatest(allExisting);
-
-    // Atomically remove duplicate rows so the DB converges to a single row.
-    for (const dup of allExisting) {
-      if (dup._id !== existing?._id) {
-        await ctx.db.delete(dup._id);
-      }
-    }
+    const allExisting = await collectBusinessProfilesForOwner(ctx, owner);
+    const existing = await migrateBusinessProfilesToOwner(ctx, owner, allExisting);
 
     const websiteChanged =
       normalizedWebsite !==
@@ -314,16 +424,7 @@ export const saveBusinessProfile = mutation({
         args.businessName.trim() !== (existing.businessName ?? '').trim();
 
       if (businessTypeChanged || businessNameChanged) {
-        const weekStart = getCurrentWeekStart();
-        const stale = await ctx.db
-          .query('aiSuggestions')
-          .withIndex('by_userId_and_weekStart', (q) =>
-            q.eq('userId', userId).eq('weekStartAt', weekStart),
-          )
-          .collect();
-        for (const row of stale) {
-          await ctx.db.delete(row._id);
-        }
+        await deleteCurrentWeekSuggestionsForOwner(ctx, owner);
       }
 
       await ctx.db.patch(existing._id, { ...payload, updatedAt: now });
@@ -351,14 +452,11 @@ export const saveWebsiteScanResults = mutation({
     websiteScanTruncated: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error('לא מחובר למערכת');
+    const owner = await getAuthenticatedOwner(ctx);
+    if (!owner) throw new Error('לא מחובר למערכת');
 
-    const all = await ctx.db
-      .query('businessProfiles')
-      .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
-      .collect();
-    const profile = pickLatest(all);
+    const all = await collectBusinessProfilesForOwner(ctx, owner);
+    const profile = await migrateBusinessProfilesToOwner(ctx, owner, all);
     if (!profile) throw new Error('NO_BUSINESS_PROFILE');
 
     await ctx.db.patch(profile._id, {
@@ -386,14 +484,11 @@ export const updatePostImageType = mutation({
     ),
   },
   handler: async (ctx, { postImageType }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error('לא מחובר למערכת');
+    const owner = await getAuthenticatedOwner(ctx);
+    if (!owner) throw new Error('לא מחובר למערכת');
 
-    const all = await ctx.db
-      .query('businessProfiles')
-      .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
-      .collect();
-    const profile = pickLatest(all);
+    const all = await collectBusinessProfilesForOwner(ctx, owner);
+    const profile = await migrateBusinessProfilesToOwner(ctx, owner, all);
     if (!profile) throw new Error('NO_BUSINESS_PROFILE');
 
     await ctx.db.patch(profile._id, {
@@ -415,20 +510,14 @@ export const updatePostImageType = mutation({
 // preserved on every operation except `delete` (which removes one row).
 
 async function loadMyProfile(
-  ctx: { auth: { getUserIdentity: () => Promise<unknown> }; db: any },
+  ctx: { auth: any; db: any },
 ) {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity || typeof identity !== 'object' || !('subject' in identity)) {
+  const owner = await getAuthenticatedOwner(ctx);
+  if (!owner) {
     throw new Error('לא מחובר למערכת');
   }
-  const subject = (identity as { subject: string }).subject;
-  const all = await ctx.db
-    .query('businessProfiles')
-    .withIndex('by_userId', (q: { eq: (k: string, v: string) => unknown }) =>
-      q.eq('userId', subject),
-    )
-    .collect();
-  const profile = pickLatest(all) as any;
+  const all = await collectBusinessProfilesForOwner(ctx, owner);
+  const profile = (await migrateBusinessProfilesToOwner(ctx, owner, all)) as any;
   if (!profile) throw new Error('NO_BUSINESS_PROFILE');
   return profile;
 }
@@ -646,33 +735,13 @@ export const updateBusinessImageMeta = mutation({
 export const getMyBusinessProfile = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    // Diagnostic log for TestFlight logout/login data-persistence issue.
-    // Safe: identity.subject is just a users row _id; identity.email is not
-    // a secret. No tokens or passwords are logged anywhere.
-    if (!identity) {
-      console.info('[businessProfiles.getMyBusinessProfile] no identity', {
-        subject: null,
-        email: null,
-        profileFound: false,
-      });
+    const owner = await getAuthenticatedOwner(ctx);
+    if (!owner) {
       return null;
     }
 
-    const allProfiles = await ctx.db
-      .query('businessProfiles')
-      .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
-      .collect();
-
+    const allProfiles = await collectBusinessProfilesForOwner(ctx, owner);
     const profile = pickLatest(allProfiles);
-
-    console.info('[businessProfiles.getMyBusinessProfile] identity resolved', {
-      subject: identity.subject,
-      email: identity.email ?? null,
-      profileRowCount: allProfiles.length,
-      profileFound: Boolean(profile),
-      profileId: profile?._id ?? null,
-    });
 
     if (!profile) return null;
 
