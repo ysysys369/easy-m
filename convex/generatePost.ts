@@ -1642,9 +1642,10 @@ export const processGenerationJob = internalAction({
     });
     if (!job || job.status !== 'processing') return;
 
-    await ctx.runMutation(internal.generationJobs.markGenerationJobStarted, {
+    const startedJobId = await ctx.runMutation(internal.generationJobs.markGenerationJobStarted, {
       jobId,
     });
+    if (!startedJobId) return;
 
     try {
       const profile = job.businessProfileSnapshot as BusinessProfile;

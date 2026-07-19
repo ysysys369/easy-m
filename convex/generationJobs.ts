@@ -86,6 +86,9 @@ export const createGenerationJob = mutation({
     const userEmail = normalizeEmail(identity.email);
     const now = Date.now();
     const normalizedTopic = topic.trim();
+    if (!userEmail) {
+      throw new Error('MISSING_AUTH_EMAIL');
+    }
 
     const existingByKey = await ctx.db
       .query('generationJobs')
@@ -106,6 +109,26 @@ export const createGenerationJob = mutation({
       return publicJob(activeJob);
     }
 
+    let user = await findUserByEmail(ctx, userEmail);
+    if (!user) {
+      const userRowId = await ctx.db.insert('users', {
+        email: userEmail,
+        emailVerified: identity.emailVerified ?? false,
+        fullName: identity.name ?? 'User',
+        role: 'user',
+        userType: 'free',
+        isActive: true,
+        postsGenerated: 0,
+        postsUsedThisWeek: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+      user = await ctx.db.get(userRowId);
+    }
+    if (!hasQuota(user, now)) {
+      throw new Error('WEEKLY_LIMIT_REACHED');
+    }
+
     const latestJob = await ctx.db
       .query('generationJobs')
       .withIndex('by_userId_createdAt', (q) => q.eq('userId', userId))
@@ -118,11 +141,6 @@ export const createGenerationJob = mutation({
       now - latestJob.createdAt < ACTIVE_JOB_WINDOW_MS
     ) {
       return publicJob(latestJob);
-    }
-
-    const user = await findUserByEmail(ctx, userEmail);
-    if (!hasQuota(user, now)) {
-      throw new Error('WEEKLY_LIMIT_REACHED');
     }
 
     const profiles = await ctx.db
@@ -200,9 +218,10 @@ export const markGenerationJobStarted = internalMutation({
   handler: async (ctx, { jobId }) => {
     const job = await ctx.db.get(jobId);
     if (!job || job.status !== 'processing') return null;
+    if (job.startedAt) return null;
     const now = Date.now();
     await ctx.db.patch(jobId, {
-      startedAt: job.startedAt ?? now,
+      startedAt: now,
       updatedAt: now,
     });
     return jobId;

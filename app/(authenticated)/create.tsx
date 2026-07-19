@@ -41,7 +41,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { captureRef } from 'react-native-view-shot';
-import { LogoTopLeft } from '@/components/LogoTopLeft';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { IS_DEV_MODE } from '@/config/appConfig';
@@ -2868,6 +2867,8 @@ export default function CreateScreen() {
   const [focused, setFocused] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showUpgrade, setShowUpgrade] = useState(false);
+  const [freePostConsumedThisSession, setFreePostConsumedThisSession] =
+    useState(false);
 
   // If a different topic arrives while the screen is already mounted (e.g. the
   // user taps a second suggestion), update the input. Local edits are not
@@ -2896,6 +2897,26 @@ export default function CreateScreen() {
   const isMissingProfile = businessProfile !== undefined && !hasBusinessProfile;
   const isQueryLoading =
     weeklyStatus === undefined || businessProfile === undefined;
+  const displayWeeklyStatus =
+    freePostConsumedThisSession && !effectiveIsPremium && weeklyStatus
+      ? {
+          ...weeklyStatus,
+          used: Math.max(weeklyStatus.used, 1),
+          remaining: 0,
+          limit: 1,
+        }
+      : weeklyStatus;
+
+  useEffect(() => {
+    if (effectiveIsPremium || weeklyStatus === undefined) return;
+    if (weeklyStatus.remaining <= 0) {
+      setFreePostConsumedThisSession(true);
+      return;
+    }
+    if (weeklyStatus.used === 0) {
+      setFreePostConsumedThisSession(false);
+    }
+  }, [effectiveIsPremium, weeklyStatus?.remaining, weeklyStatus?.used]);
 
   // Central quota gate — trust the backend's authoritative `remaining` field.
   // Backend already computes it per user type (paid → 3-per-week, free → 1
@@ -2904,10 +2925,10 @@ export default function CreateScreen() {
   // DB's `userType` and a paid user with slots remaining gets falsely blocked
   // by the "any usage = free post used" clause.
   const isLimitReached =
-    weeklyStatus !== undefined && weeklyStatus.remaining <= 0;
+    displayWeeklyStatus !== undefined && displayWeeklyStatus.remaining <= 0;
   const canGeneratePost = !isQueryLoading && !isLimitReached && hasBusinessProfile;
-  const remainingThisWeek = weeklyStatus?.remaining ?? 0;
-  const weeklyLimit = weeklyStatus?.limit ?? 3;
+  const remainingThisWeek = displayWeeklyStatus?.remaining ?? 0;
+  const weeklyLimit = displayWeeklyStatus?.limit ?? 3;
 
   const blockReason = isQueryLoading
     ? 'loading'
@@ -2970,7 +2991,15 @@ export default function CreateScreen() {
     }
   };
 
+  const refreshQuotaAfterSuccessfulPost = () => {
+    if (!effectiveIsPremium) {
+      setFreePostConsumedThisSession(true);
+    }
+    convex.query(api.users.getWeeklyPostStatus, {}).catch(() => {});
+  };
+
   const showCompletedJob = (message?: string) => {
+    refreshQuotaAfterSuccessfulPost();
     setFinishedAt(Date.now());
     window.setTimeout(() => {
       setLoading(false);
@@ -3042,7 +3071,7 @@ export default function CreateScreen() {
     if (effectiveIsPremium) {
       Alert.alert(
         'הגעת למכסה השבועית',
-        `ניצלת את כל ${weeklyStatus?.limit ?? 3} הפוסטים השבועיים שלך. המכסה תתחדש בשבוע הבא.`,
+        `ניצלת את כל ${displayWeeklyStatus?.limit ?? 3} הפוסטים השבועיים שלך. המכסה תתחדש בשבוע הבא.`,
       );
     } else {
       setShowUpgrade(true);
@@ -3090,6 +3119,9 @@ export default function CreateScreen() {
       }
 
       const result = await generateMarketingPost({ topic });
+      if (result.imageBase64) {
+        refreshQuotaAfterSuccessfulPost();
+      }
       setGeneratedPost({
         ...result,
         postImageType:
@@ -3137,6 +3169,7 @@ export default function CreateScreen() {
       const msg = String(err);
       const recoveredPost = await recoverLatestCreatedPost(generationStartedAt);
       if (recoveredPost) {
+        refreshQuotaAfterSuccessfulPost();
         setFinishedAt(Date.now());
         window.setTimeout(() => {
           setLoading(false);
@@ -3224,8 +3257,6 @@ export default function CreateScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['top']}>
-      <LogoTopLeft />
-
       {/* ── Upgrade Modal — celebration + benefits ── */}
       <Modal
         visible={showUpgrade}
@@ -3297,13 +3328,13 @@ export default function CreateScreen() {
               }}
             >
               {/* Branch on the backend-reported quota limit, not on the
-                  in-flight RC isPremium flag. weeklyStatus.limit comes from
+                  in-flight RC isPremium flag. displayWeeklyStatus.limit comes from
                   Convex (3 for paid users, 1 for free) and reflects the
                   real effective premium status — so a premium user with a
                   late-loading RC SDK still sees the correct "3 weekly posts"
                   text instead of the "1 free post" text. */}
-              {(weeklyStatus?.limit ?? (effectiveIsPremium ? 3 : 1)) > 1
-                ? `ניצלת את כל ${weeklyStatus?.limit ?? 3} הפוסטים השבועיים שלך 🎯`
+              {(displayWeeklyStatus?.limit ?? (effectiveIsPremium ? 3 : 1)) > 1
+                ? `ניצלת את כל ${displayWeeklyStatus?.limit ?? 3} הפוסטים השבועיים שלך 🎯`
                 : 'ניצלת את הפוסט החינמי שלך ✨'}
             </Text>
 
