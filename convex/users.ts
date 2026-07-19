@@ -1,3 +1,4 @@
+import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import { internalMutation, mutation, query } from './_generated/server';
 
@@ -59,8 +60,10 @@ async function getCurrentAuthUser(ctx: { db: any; auth: any }) {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) return { identity: null, user: null };
 
+  const authUserId = await getAuthUserId(ctx);
+  const authUser = authUserId ? await ctx.db.get(authUserId) : null;
   const emailUser = await findUserByEmail(ctx, identity.email);
-  return { identity, user: emailUser };
+  return { identity, user: emailUser ?? authUser };
 }
 
 // ─── Push notifications & app activity ──────────────────────────────────────
@@ -70,11 +73,11 @@ async function getOrCreateUserByIdentity(
 ): Promise<{ _id: any }> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) throw new Error('לא מחובר');
-  const email = normalizeEmail(identity.email);
-  if (!email) throw new Error('MISSING_AUTH_EMAIL');
   const now = Date.now();
   const { user: existing } = await getCurrentAuthUser(ctx);
   if (existing) return existing;
+  const email = normalizeEmail(identity.email);
+  if (!email) throw new Error('AUTH_USER_NOT_RESOLVED');
   const id = await ctx.db.insert('users', {
     email,
     emailVerified: identity.emailVerified ?? false,
@@ -194,29 +197,30 @@ export const syncSubscriptionStatus = mutation({
       });
       return;
     }
-    const email = normalizeEmail(identity.email);
-    if (!email) throw new Error('MISSING_AUTH_EMAIL');
+    const { user } = await getCurrentAuthUser(ctx);
+    const email = normalizeEmail(user?.email) || normalizeEmail(identity.email);
+    if (!email) throw new Error('AUTH_USER_NOT_RESOLVED');
     const now = Date.now();
-    const user = await findUserByEmail(ctx, email);
+    const emailUser = user ?? (await findUserByEmail(ctx, email));
     const newUserType = isPremium ? 'paid' : 'free';
-    if (user) {
-      const changed = user.userType !== newUserType;
+    if (emailUser) {
+      const changed = emailUser.userType !== newUserType;
       // Free gift post must not consume the premium weekly quota. When a free
       // user upgrades, reset the weekly counter so the paid quota starts fresh.
       const upgradedToPaid = changed && newUserType === 'paid';
       console.info('[users.syncSubscriptionStatus] existing user found', {
         subject: identity.subject,
         email: email || null,
-        userRowId: user._id,
-        subjectMatchesUserRowId: identity.subject === user._id,
-        previousUserType: user.userType ?? null,
+        userRowId: emailUser._id,
+        subjectMatchesUserRowId: identity.subject === emailUser._id,
+        previousUserType: emailUser.userType ?? null,
         newUserType,
         typeChanged: changed,
         upgradedToPaid,
         isPremium,
       });
       if (changed) {
-        await ctx.db.patch(user._id, {
+        await ctx.db.patch(emailUser._id, {
           userType: newUserType,
           updatedAt: now,
           ...(upgradedToPaid && {
@@ -260,8 +264,6 @@ export const incrementPostsGenerated = mutation({
   handler: async (ctx) => {
     const { identity, user } = await getCurrentAuthUser(ctx);
     if (!identity) throw new Error('לא מחובר');
-    const email = normalizeEmail(identity.email);
-    if (!email) throw new Error('MISSING_AUTH_EMAIL');
     const now = Date.now();
 
     if (user) {
@@ -275,6 +277,8 @@ export const incrementPostsGenerated = mutation({
         updatedAt: now,
       });
     } else {
+      const email = normalizeEmail(identity.email);
+      if (!email) throw new Error('AUTH_USER_NOT_RESOLVED');
       // User authenticated but not yet in custom users table — create them
       await ctx.db.insert('users', {
         email,

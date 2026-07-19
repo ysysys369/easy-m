@@ -1,3 +1,4 @@
+import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import type { Doc } from './_generated/dataModel';
@@ -56,6 +57,26 @@ async function findUserByEmail(ctx: { db: any }, email: string) {
   );
 }
 
+async function resolveCurrentUserForGeneration(ctx: { db: any; auth: any }) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
+    return { identity: null, user: null, email: '' };
+  }
+
+  const authUserId = await getAuthUserId(ctx);
+  const authUser: Doc<'users'> | null = authUserId
+    ? await ctx.db.get(authUserId)
+    : null;
+  const identityEmail = normalizeEmail(identity.email);
+  const emailUser = identityEmail
+    ? await findUserByEmail(ctx, identityEmail)
+    : null;
+  const user = emailUser ?? authUser;
+  const email = normalizeEmail(user?.email) || identityEmail;
+
+  return { identity, user, email };
+}
+
 function publicJob(job: Doc<'generationJobs'>) {
   return {
     _id: job._id,
@@ -79,16 +100,14 @@ export const createGenerationJob = mutation({
     idempotencyKey: v.string(),
   },
   handler: async (ctx, { topic, idempotencyKey }) => {
-    const identity = await ctx.auth.getUserIdentity();
+    const { identity, user: resolvedUser, email: resolvedEmail } =
+      await resolveCurrentUserForGeneration(ctx);
     if (!identity) throw new Error('לא מחובר');
 
     const userId = identity.subject;
-    const userEmail = normalizeEmail(identity.email);
+    const userEmail = resolvedEmail;
     const now = Date.now();
     const normalizedTopic = topic.trim();
-    if (!userEmail) {
-      throw new Error('MISSING_AUTH_EMAIL');
-    }
 
     const existingByKey = await ctx.db
       .query('generationJobs')
@@ -109,8 +128,11 @@ export const createGenerationJob = mutation({
       return publicJob(activeJob);
     }
 
-    let user = await findUserByEmail(ctx, userEmail);
+    let user = resolvedUser ?? (await findUserByEmail(ctx, userEmail));
     if (!user) {
+      if (!userEmail) {
+        throw new Error('AUTH_USER_NOT_RESOLVED');
+      }
       const userRowId = await ctx.db.insert('users', {
         email: userEmail,
         emailVerified: identity.emailVerified ?? false,
@@ -124,6 +146,9 @@ export const createGenerationJob = mutation({
         updatedAt: now,
       });
       user = await ctx.db.get(userRowId);
+    }
+    if (!userEmail) {
+      throw new Error('AUTH_USER_NOT_RESOLVED');
     }
     if (!hasQuota(user, now)) {
       throw new Error('WEEKLY_LIMIT_REACHED');
