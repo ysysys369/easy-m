@@ -8,7 +8,6 @@ import {
   Download,
   Image as ImageIcon,
   LayoutDashboard,
-  RefreshCw,
   Share2,
   Sparkles,
   Trash2,
@@ -247,20 +246,6 @@ async function copyTextToClipboardOrShare(text: string): Promise<void> {
   await NativeShare.share({ message: text });
 }
 
-function buildVariationTopic(post: Post): string {
-  const caption = captionFor(post).replace(/\s+/g, ' ').trim().slice(0, 650);
-  return [
-    'צור וריאציה חדשה לפוסט הזה.',
-    'שמור על אותו עסק ואותו כיוון שיווקי, אבל אל תעתיק את הפוסט.',
-    'שנה סגנון, פריסה, ניסוח וקונספט ויזואלי כדי שירגיש כמו גרסה חדשה.',
-    post.businessName ? `שם העסק: ${post.businessName}` : '',
-    post.businessType ? `סוג העסק / מטרה משוערת: ${post.businessType}` : '',
-    `הפוסט המקורי להשראה: ${caption}`,
-  ]
-    .filter(Boolean)
-    .join('\n');
-}
-
 function ActionButton({
   icon,
   label,
@@ -311,7 +296,6 @@ function PostCard({
   onCopyText,
   onShareImageOnly,
   onShareImageText,
-  onVariation,
   onDelete,
   busyAction,
 }: {
@@ -322,7 +306,6 @@ function PostCard({
   onCopyText: (post: Post) => void;
   onShareImageOnly: (post: Post) => void;
   onShareImageText: (post: Post) => void;
-  onVariation: (post: Post) => void;
   onDelete: (post: Post) => void;
   busyAction: string | null;
 }) {
@@ -509,11 +492,6 @@ function PostCard({
           </View>
           <View style={{ flexDirection: rtl.flexDirection, gap: 8 }}>
             <ActionButton
-              icon={<RefreshCw size={15} color={C.purpleLight} />}
-              label="וריאציה"
-              onPress={() => onVariation(post)}
-            />
-            <ActionButton
               icon={<Trash2 size={15} color={C.red} />}
               label="מחק"
               danger
@@ -535,7 +513,6 @@ function PostDetailModal({
   onCopyText,
   onShareImageOnly,
   onShareImageText,
-  onVariation,
   onDelete,
   busyAction,
 }: {
@@ -547,7 +524,6 @@ function PostDetailModal({
   onCopyText: (post: Post) => void;
   onShareImageOnly: (post: Post) => void;
   onShareImageText: (post: Post) => void;
-  onVariation: (post: Post) => void;
   onDelete: (post: Post) => void;
   busyAction: string | null;
 }) {
@@ -695,11 +671,6 @@ function PostDetailModal({
               />
             </View>
             <View style={{ flexDirection: rtl.flexDirection, gap: 8 }}>
-              <ActionButton
-                icon={<RefreshCw size={16} color={C.purpleLight} />}
-                label="צור וריאציה"
-                onPress={() => onVariation(post)}
-              />
               <ActionButton
                 icon={<Trash2 size={16} color={C.red} />}
                 label="מחק"
@@ -885,14 +856,6 @@ export default function PostsPage() {
     }
   };
 
-  const handleVariation = (post: Post) => {
-    setSelectedPost(null);
-    router.push({
-      pathname: '/(authenticated)/create',
-      params: { topic: buildVariationTopic(post) },
-    });
-  };
-
   const handleDelete = (post: Post) => {
     Alert.alert('מחיקת פוסט', 'האם למחוק את הפוסט הזה?', [
       { text: 'ביטול', style: 'cancel' },
@@ -927,7 +890,6 @@ export default function PostsPage() {
         onCopyText={handleCopyText}
         onShareImageOnly={handleShareImageOnly}
         onShareImageText={handleShareImageText}
-        onVariation={handleVariation}
         onDelete={handleDelete}
         busyAction={busyAction}
       />
@@ -1002,7 +964,6 @@ export default function PostsPage() {
                   onCopyText={handleCopyText}
                   onShareImageOnly={handleShareImageOnly}
                   onShareImageText={handleShareImageText}
-                  onVariation={handleVariation}
                   onDelete={handleDelete}
                 />
               ))}
@@ -1011,33 +972,6 @@ export default function PostsPage() {
         </View>
       </ScrollView>
 
-      {visiblePosts !== undefined && visiblePosts.length > 0 ? (
-        <View style={{ position: 'absolute', width: '100%', paddingHorizontal: 20, bottom: 150 }}>
-          <Pressable
-            accessible={true}
-            accessibilityLabel="צור פוסט"
-            accessibilityRole="button"
-            onPress={goCreate}
-            style={{
-              backgroundColor: C.purple,
-              borderRadius: 18,
-              paddingVertical: 16,
-              flexDirection: rtl.flexDirection,
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-              shadowColor: C.purple,
-              shadowOffset: { width: 0, height: 8 },
-              shadowOpacity: 0.55,
-              shadowRadius: 18,
-              elevation: 12,
-            }}
-          >
-            <Sparkles size={18} color="#fff" />
-            <Text style={{ color: '#fff', fontSize: 16, fontWeight: '900' }}>צור פוסט חדש</Text>
-          </Pressable>
-        </View>
-      ) : null}
     </SafeAreaView>
   );
 }

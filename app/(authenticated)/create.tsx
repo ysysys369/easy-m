@@ -435,10 +435,12 @@ function LoadingSkeleton({ finishedAt }: { finishedAt: number | null }) {
                 color: '#c4acff',
                 fontSize: 12.5,
                 fontWeight: '700',
+                textAlign: 'right',
                 writingDirection: 'rtl',
+                flexShrink: 1,
               }}
             >
-              זה בדרך כלל לוקח בערך 3 דקות
+              זה עלול לקחת כמה דקות — אנחנו יוצרים לך פוסט מושלם
             </Text>
           </View>
 
