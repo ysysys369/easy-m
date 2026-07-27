@@ -33,7 +33,7 @@ import type { Doc, Id } from '@/convex/_generated/dataModel';
 import { IS_DEV_MODE } from '@/config/appConfig';
 import { useDevUiOverride } from '@/contexts/DevUiOverrideContext';
 import { useRevenueCat } from '@/contexts/RevenueCatContext';
-import { needsExplicitRTL, rtl } from '@/lib/rtl';
+import { rtl } from '@/lib/rtl';
 
 // ─── צבעים ─────────────────────────────────────────────────────────────────
 const C = {
@@ -627,7 +627,7 @@ function WeeklySuggestionCard({
         {suggestion.description}
       </Text>
 
-      <View style={{ alignItems: needsExplicitRTL() ? 'flex-end' : 'flex-start', alignSelf: 'stretch' }}>
+      <View style={{ alignItems: 'flex-end', alignSelf: 'stretch' }}>
         <Pressable
           onPress={() => onUse(suggestion)}
           disabled={used}
@@ -637,7 +637,7 @@ function WeeklySuggestionCard({
             flexDirection: rtl.flexDirection,
             alignItems: 'center',
             gap: 8,
-            backgroundColor: used ? 'rgba(124,58,237,0.25)' : '#7C3AED',
+            backgroundColor: used ? 'rgba(124,58,237,0.25)' : C.purple,
             paddingVertical: 13,
             paddingHorizontal: 22,
             borderRadius: 50,

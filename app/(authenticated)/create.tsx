@@ -440,7 +440,7 @@ function LoadingSkeleton({ finishedAt }: { finishedAt: number | null }) {
                 flexShrink: 1,
               }}
             >
-              זה עלול לקחת כמה דקות — אנחנו יוצרים לך פוסט מושלם
+              זה ייקח מספר דקות
             </Text>
           </View>
 

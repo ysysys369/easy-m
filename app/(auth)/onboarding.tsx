@@ -287,6 +287,7 @@ function CTAButton({
               fontWeight: '800',
               letterSpacing: 0.3,
               textAlign: 'center',
+              writingDirection: 'rtl',
             }}
             numberOfLines={1}
           >
@@ -303,12 +304,17 @@ const T = {
   title: {
     color: C.white, fontSize: 30, fontWeight: '800' as const,
     textAlign: 'center' as const, lineHeight: 42,
+    writingDirection: 'rtl' as const,
   },
   sub: {
     color: C.textLight, fontSize: 15, fontWeight: '400' as const,
     textAlign: 'center' as const, lineHeight: 24,
+    writingDirection: 'rtl' as const,
   },
 };
+
+const physicalLeftToRightRow =
+  rtl.flexDirection === 'row' ? 'row-reverse' : 'row';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SCREEN 0 — WELCOME
@@ -479,7 +485,7 @@ function StepWhatsEasyM({ onNext }: { onNext: () => void }) {
             style={{
               opacity: itemAnims[i].opacity,
               transform: [{ translateX: itemAnims[i].translateX }],
-              flexDirection: rtl.flexDirection,
+              flexDirection: physicalLeftToRightRow,
               alignItems: 'center',
               gap: 16,
               backgroundColor: C.card,
@@ -498,11 +504,11 @@ function StepWhatsEasyM({ onNext }: { onNext: () => void }) {
             }}>
               <Text style={{ fontSize: 24 }}>{feat.emoji}</Text>
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: C.white, fontSize: 16, fontWeight: '700', textAlign: 'right' }}>
+            <View style={{ flex: 1, minWidth: 0, alignItems: 'flex-end' }}>
+              <Text style={{ color: C.white, fontSize: 16, fontWeight: '700', textAlign: 'right', writingDirection: 'rtl' }}>
                 {feat.title}
               </Text>
-              <Text style={{ color: C.textLight, fontSize: 13, marginTop: 3, textAlign: 'right' }}>
+              <Text style={{ color: C.textLight, fontSize: 13, marginTop: 3, textAlign: 'right', writingDirection: 'rtl' }}>
                 {feat.sub}
               </Text>
             </View>
@@ -555,7 +561,7 @@ function PainCard({
           borderColor: selected ? C.purple : C.purpleBdr,
           paddingVertical: 18,
           paddingHorizontal: 18,
-          flexDirection: rtl.flexDirection,
+          flexDirection: physicalLeftToRightRow,
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: 14,
@@ -566,17 +572,6 @@ function PainCard({
           elevation:     selected ? 10 : 3,
         })}
       >
-        <Text style={{
-          flex: 1,
-          color: selected ? C.white : '#e4e4e7',
-          fontSize: 16,
-          fontWeight: selected ? '800' : '600',
-          textAlign: 'right',
-          writingDirection: 'rtl',
-        }}>
-          {label}
-        </Text>
-
         {/* Checkbox indicator — filled + checkmark when selected */}
         <View style={{
           width: 26,
@@ -590,6 +585,17 @@ function PainCard({
         }}>
           {selected ? <Check size={16} color="#fff" strokeWidth={3} /> : null}
         </View>
+
+        <Text style={{
+          flex: 1,
+          color: selected ? C.white : '#e4e4e7',
+          fontSize: 16,
+          fontWeight: selected ? '800' : '600',
+          textAlign: 'right',
+          writingDirection: 'rtl',
+        }}>
+          {label}
+        </Text>
       </Pressable>
     </Animated.View>
   );
@@ -703,7 +709,7 @@ function StepValue({ onNext }: { onNext: () => void }) {
             style={{
               opacity: cardAnims[i].opacity,
               transform: [{ translateY: cardAnims[i].translateY }],
-              flexDirection: rtl.flexDirection,
+              flexDirection: physicalLeftToRightRow,
               alignItems: 'center',
               gap: 18,
               backgroundColor: C.card,
@@ -722,7 +728,7 @@ function StepValue({ onNext }: { onNext: () => void }) {
             }}>
               <Text style={{ fontSize: 26 }}>{card.emoji}</Text>
             </View>
-            <View style={{ flex: 1 }}>
+            <View style={{ flex: 1, minWidth: 0, alignItems: 'flex-end' }}>
               <Text style={{ color: C.white, fontSize: 16, fontWeight: '700', textAlign: 'right', writingDirection: 'rtl' }}>
                 {card.title}
               </Text>
@@ -914,7 +920,7 @@ function StepPersonalization({ onNext }: { onNext: () => void }) {
             style={{
               opacity: itemAnims[i].opacity,
               transform: [{ translateY: itemAnims[i].translateY }],
-              flexDirection: rtl.flexDirection,
+              flexDirection: physicalLeftToRightRow,
               alignItems: 'center',
               gap: 14,
               backgroundColor: C.card,
@@ -926,7 +932,7 @@ function StepPersonalization({ onNext }: { onNext: () => void }) {
             }}
           >
             <Text style={{ fontSize: 22 }}>{item.emoji}</Text>
-            <Text style={{ color: C.textLight, fontSize: 15, fontWeight: '500', flex: 1, textAlign: 'right' }}>
+            <Text style={{ color: C.textLight, fontSize: 15, fontWeight: '500', flex: 1, minWidth: 0, textAlign: 'right', writingDirection: 'rtl' }}>
               {item.label}
             </Text>
           </Animated.View>
