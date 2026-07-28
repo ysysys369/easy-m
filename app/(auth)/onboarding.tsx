@@ -504,11 +504,11 @@ function StepWhatsEasyM({ onNext }: { onNext: () => void }) {
             }}>
               <Text style={{ fontSize: 24 }}>{feat.emoji}</Text>
             </View>
-            <View style={{ flex: 1, minWidth: 0, alignItems: 'flex-end' }}>
-              <Text style={{ color: C.white, fontSize: 16, fontWeight: '700', textAlign: 'right', writingDirection: 'rtl' }}>
+            <View style={{ flex: 1, minWidth: 0, alignItems: 'stretch' }}>
+              <Text style={{ alignSelf: 'stretch', color: C.white, fontSize: 16, fontWeight: '700', textAlign: 'right', writingDirection: 'rtl' }}>
                 {feat.title}
               </Text>
-              <Text style={{ color: C.textLight, fontSize: 13, marginTop: 3, textAlign: 'right', writingDirection: 'rtl' }}>
+              <Text style={{ alignSelf: 'stretch', color: C.textLight, fontSize: 13, marginTop: 3, textAlign: 'right', writingDirection: 'rtl' }}>
                 {feat.sub}
               </Text>
             </View>
@@ -561,7 +561,7 @@ function PainCard({
           borderColor: selected ? C.purple : C.purpleBdr,
           paddingVertical: 18,
           paddingHorizontal: 18,
-          flexDirection: physicalLeftToRightRow,
+          flexDirection: rtl.flexDirection,
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: 14,
@@ -728,11 +728,11 @@ function StepValue({ onNext }: { onNext: () => void }) {
             }}>
               <Text style={{ fontSize: 26 }}>{card.emoji}</Text>
             </View>
-            <View style={{ flex: 1, minWidth: 0, alignItems: 'flex-end' }}>
-              <Text style={{ color: C.white, fontSize: 16, fontWeight: '700', textAlign: 'right', writingDirection: 'rtl' }}>
+            <View style={{ flex: 1, minWidth: 0, alignItems: 'stretch' }}>
+              <Text style={{ alignSelf: 'stretch', color: C.white, fontSize: 16, fontWeight: '700', textAlign: 'right', writingDirection: 'rtl' }}>
                 {card.title}
               </Text>
-              <Text style={{ color: C.textLight, fontSize: 13, marginTop: 3, textAlign: 'right', writingDirection: 'rtl' }}>
+              <Text style={{ alignSelf: 'stretch', color: C.textLight, fontSize: 13, marginTop: 3, textAlign: 'right', writingDirection: 'rtl' }}>
                 {card.sub}
               </Text>
             </View>
@@ -932,7 +932,7 @@ function StepPersonalization({ onNext }: { onNext: () => void }) {
             }}
           >
             <Text style={{ fontSize: 22 }}>{item.emoji}</Text>
-            <Text style={{ color: C.textLight, fontSize: 15, fontWeight: '500', flex: 1, minWidth: 0, textAlign: 'right', writingDirection: 'rtl' }}>
+            <Text style={{ alignSelf: 'stretch', color: C.textLight, fontSize: 15, fontWeight: '500', flex: 1, minWidth: 0, textAlign: rtl.textAlign, writingDirection: 'rtl' }}>
               {item.label}
             </Text>
           </Animated.View>

@@ -1,7 +1,6 @@
 import { useMutation, useConvexAuth } from 'convex/react';
 import { Redirect, Tabs, useRootNavigationState } from 'expo-router';
 import {
-  FileSpreadsheet,
   FileText,
   Home,
   Settings,
@@ -69,11 +68,6 @@ export default function AuthenticatedLayout() {
       name: 'page1',
       title: 'פוסטים',
       icon: FileText,
-    },
-    {
-      name: 'page2',
-      title: 'זמנים',
-      icon: FileSpreadsheet,
     },
     {
       name: 'settings',

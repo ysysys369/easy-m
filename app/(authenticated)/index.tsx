@@ -627,12 +627,20 @@ function WeeklySuggestionCard({
         {suggestion.description}
       </Text>
 
-      <View style={{ alignItems: 'flex-end', alignSelf: 'stretch' }}>
+      <View
+        style={{
+          flexDirection: rtl.flexDirection,
+          justifyContent: 'flex-start',
+          alignSelf: 'stretch',
+          marginTop: 4,
+        }}
+      >
         <Pressable
           onPress={() => onUse(suggestion)}
           disabled={used}
           accessibilityRole="button"
           accessibilityLabel={used ? 'פוסט נוצר' : 'צור פוסט מההצעה'}
+          hitSlop={8}
           style={({ pressed }) => ({
             flexDirection: rtl.flexDirection,
             alignItems: 'center',

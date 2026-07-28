@@ -3005,7 +3005,7 @@ export default function CreateScreen() {
     setFinishedAt(Date.now());
     window.setTimeout(() => {
       setLoading(false);
-      router.push('/(authenticated)/page2');
+      router.push('/(authenticated)/page1');
       Alert.alert(
         'הפוסט נוצר ונשמר',
         message ?? 'הפוסט מוכן ונמצא במסך הפוסטים שלך.',
@@ -3175,7 +3175,7 @@ export default function CreateScreen() {
         setFinishedAt(Date.now());
         window.setTimeout(() => {
           setLoading(false);
-          router.push('/(authenticated)/page2');
+          router.push('/(authenticated)/page1');
           Alert.alert(
             'הפוסט נוצר ונשמר',
             'החיבור חזר לפני שקיבלנו את התצוגה המקדימה, אבל הפוסט נשמר ונמצא במסך הפוסטים שלך.',
