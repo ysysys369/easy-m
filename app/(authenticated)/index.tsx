@@ -638,19 +638,12 @@ function WeeklySuggestionCard({
         <Pressable
           onPress={() => onUse(suggestion)}
           disabled={used}
+          accessible={true}
           accessibilityRole="button"
           accessibilityLabel={used ? 'פוסט נוצר' : 'צור פוסט מההצעה'}
           hitSlop={8}
           style={({ pressed }) => ({
-            flexDirection: rtl.flexDirection,
-            alignItems: 'center',
-            gap: 8,
-            backgroundColor: used ? 'rgba(124,58,237,0.25)' : C.purple,
-            paddingVertical: 13,
-            paddingHorizontal: 22,
             borderRadius: 50,
-            borderWidth: 1,
-            borderColor: used ? 'rgba(124,58,237,0.3)' : 'rgba(200,170,255,0.55)',
             opacity: pressed ? 0.78 : 1,
             transform: [{ scale: pressed ? 0.97 : 1 }],
             shadowColor: '#7C3AED',
@@ -660,10 +653,26 @@ function WeeklySuggestionCard({
             elevation: 12,
           })}
         >
-          <Text style={{ color: '#ffffff', fontSize: 15, fontWeight: '800', letterSpacing: 0.2 }}>
-            {used ? 'נוצר ✓' : 'צור פוסט'}
-          </Text>
-          {!used && <Zap size={15} color="#ffffff" fill="#ffffff" />}
+          <View
+            style={{
+              flexDirection: rtl.flexDirection,
+              alignItems: 'center',
+              gap: 8,
+              backgroundColor: used ? 'rgba(124,58,237,0.25)' : C.purple,
+              paddingVertical: 13,
+              paddingHorizontal: 22,
+              borderRadius: 50,
+              borderWidth: 1,
+              borderColor: used
+                ? 'rgba(124,58,237,0.3)'
+                : 'rgba(200,170,255,0.55)',
+            }}
+          >
+            <Text style={{ color: '#ffffff', fontSize: 15, fontWeight: '800', letterSpacing: 0.2 }}>
+              {used ? 'נוצר ✓' : 'צור פוסט'}
+            </Text>
+            {!used && <Zap size={15} color="#ffffff" fill="#ffffff" />}
+          </View>
         </Pressable>
       </View>
     </View>
