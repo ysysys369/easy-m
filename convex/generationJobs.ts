@@ -3,6 +3,7 @@ import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import type { Doc } from './_generated/dataModel';
 import { internalMutation, internalQuery, mutation, query } from './_generated/server';
+import { resolveSavedLogoUrl, withValidatedLogo } from './logoAssets';
 
 const WEEKLY_POST_LIMIT = 3;
 const FREE_POST_LIMIT = 1;
@@ -225,13 +226,20 @@ export const createGenerationJob = mutation({
       throw new Error('NO_BUSINESS_PROFILE');
     }
 
+    // Business Profiles persist the Convex storage ID. Generation actions run
+    // later from a snapshot, so resolve that ID now while storage is available
+    // and snapshot only a server-accessible URL. A missing/stale ref becomes the
+    // normal no-logo branch instead of being mistaken for an attached image.
+    const resolvedLogoUrl = await resolveSavedLogoUrl(ctx, profile.logoUrl);
+    const profileSnapshot = withValidatedLogo(profile, resolvedLogoUrl);
+
     const jobId = await ctx.db.insert('generationJobs', {
       userId,
       userEmail: userEmail || undefined,
       topic: normalizedTopic,
       idempotencyKey,
       status: 'processing',
-      businessProfileSnapshot: profile,
+      businessProfileSnapshot: profileSnapshot,
       postImageType: profile.postImageType ?? 'premium_ad',
       createdAt: now,
       updatedAt: now,

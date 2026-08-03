@@ -4,7 +4,13 @@ import type { Uploadable } from 'openai';
 import OpenAI, { toFile } from 'openai';
 import { api, internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { action, internalAction, type ActionCtx } from './_generated/server';
+import { type ActionCtx, action, internalAction } from './_generated/server';
+import {
+  applyValidatedLogoInstruction,
+  collectImageReferences,
+  detectSupportedLogoImage,
+  withValidatedLogo,
+} from './logoAssets';
 
 type PostImageType = 'photo' | 'designed' | 'premium_ad';
 type PostGoal =
@@ -1318,7 +1324,7 @@ function buildSimpleImagePrompt({
     `Mood/tone: ${brief.visualStyle}, ${identity.mood}.\n` +
     (services ? `Products/services: ${services}.\n` : '') +
     (profile.logoUrl
-      ? 'Logo: PNG attached. Integrate as a designed-in element. Preserve native transparency — NO white card, box, or background behind it. Place as a small refined brand mark.\n'
+      ? 'Logo: the actual uploaded logo image is attached. Use it exactly once as a designed-in brand mark. Preserve its original proportions, colors, typography, transparency, and appearance. Do not stretch, crop, distort, translate, restyle, redraw, or recreate it. Do not invent a second logo or render a separate business-name brand mark. Use no white card, box, or generated background behind it.\n'
       : businessName
         ? `Brand name: render "${businessName}" as compact on-brand typography.\n`
         : '') +
@@ -1356,10 +1362,9 @@ function buildSimpleImagePrompt({
 
 // ─── Logo input for OpenAI images.edit ───────────────────────────────────────
 // Downloads the brand logo (from Convex storage URL or any public URL) and
-// hands it to the OpenAI SDK as an Uploadable. The PNG buffer is passed
-// untouched so the model receives the original transparency. Returns null
-// on any failure — the caller falls back to images.generate without a logo
-// reference, so a flaky logo download never blocks generation.
+// hands it to the OpenAI SDK as an Uploadable. The original bytes are passed
+// untouched. Returns null on any failure; callers then remove `logoUrl` from
+// the generation profile so the unchanged no-logo branding branch is used.
 async function fetchRemoteImageAsUploadable(
   imageUrl: string | undefined | null,
   {
@@ -1381,14 +1386,7 @@ async function fetchRemoteImageAsUploadable(
       });
       return null;
     }
-    const contentType = response.headers.get('content-type') ?? 'image/png';
-    // OpenAI images.edit accepts PNG / JPG / WEBP. Anything else gets skipped.
-    if (!/^image\/(png|jpe?g|webp)$/i.test(contentType)) {
-      devWarn(`${label} content-type not supported by images.edit; skipping`, {
-        contentType,
-      });
-      return null;
-    }
+    const responseContentType = response.headers.get('content-type');
     const arrayBuffer = await response.arrayBuffer();
     if (arrayBuffer.byteLength > maxBytes) {
       devWarn(`${label} larger than max bytes; skipping image reference`, {
@@ -1397,14 +1395,27 @@ async function fetchRemoteImageAsUploadable(
       });
       return null;
     }
-    const ext =
-      contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg'
-      : contentType.includes('webp') ? 'webp'
-      : 'png';
-    const file = await toFile(Buffer.from(arrayBuffer), `${filePrefix}.${ext}`, {
-      type: contentType,
-    });
-    return { file, bytes: arrayBuffer.byteLength, contentType };
+    const bytes = new Uint8Array(arrayBuffer);
+    const supportedImage = detectSupportedLogoImage(bytes);
+    if (!supportedImage) {
+      devWarn(`${label} bytes are not a supported PNG/JPEG/WEBP; skipping`, {
+        bytes: bytes.byteLength,
+        responseContentType,
+      });
+      return null;
+    }
+    const file = await toFile(
+      Buffer.from(bytes),
+      `${filePrefix}.${supportedImage.extension}`,
+      {
+        type: supportedImage.contentType,
+      },
+    );
+    return {
+      file,
+      bytes: bytes.byteLength,
+      contentType: supportedImage.contentType,
+    };
   } catch (error) {
     devWarn(`${label} fetch threw; skipping image reference`, {
       error: error instanceof Error ? error.message : String(error),
@@ -1447,9 +1458,7 @@ async function generateImageWithOpenAI({
   const configuredModel = process.env.OPENAI_IMAGE_MODEL?.trim();
   const model = configuredModel || BEST_OPENAI_IMAGE_MODEL;
   const usingModelOverride = Boolean(configuredModel) && configuredModel !== BEST_OPENAI_IMAGE_MODEL;
-  const imageInputs = [logoFile, styleReferenceFile].filter(
-    (file): file is Uploadable => Boolean(file),
-  );
+  const imageInputs = collectImageReferences(logoFile, styleReferenceFile);
   const usesLogoReference = Boolean(logoFile);
   const usesStyleReference = Boolean(styleReferenceFile);
   const usesImageReferences = imageInputs.length > 0;
@@ -1677,14 +1686,22 @@ export const processGenerationJob = internalAction({
         analyzeBrandAssets(openai, profile, costAcc),
         fetchLogoAsUploadable(profile.logoUrl),
       ]);
+      const generationProfile = withValidatedLogo(
+        profile,
+        logoReferenceClean ? profile.logoUrl : undefined,
+      );
 
       const cleanBrief = await generateCleanPremiumAdBrief(
         openai,
-        profile,
+        generationProfile,
         job.topic.trim(),
         assetInsightClean,
         recentPostSummaries,
         costAcc,
+      );
+      const cleanImagePrompt = applyValidatedLogoInstruction(
+        cleanBrief.imagePrompt,
+        Boolean(logoReferenceClean),
       );
 
       let cleanCaptionText = cleanBrief.caption;
@@ -1694,7 +1711,7 @@ export const processGenerationJob = internalAction({
 
       const cleanImageBase64 = await generateImageWithOpenAI({
         openai,
-        prompt: cleanBrief.imagePrompt,
+        prompt: cleanImagePrompt,
         role: 'complete_poster',
         languageMode: 'hebrew',
         logoFile: logoReferenceClean?.file ?? null,
@@ -2417,7 +2434,7 @@ function buildFallbackCleanImagePrompt(profile: NonNullable<BusinessProfile>): s
   const brandColors = profile.brandColors?.trim();
   const palette = brandColors || defaultPaletteForBusinessType(type);
   const logoLine = profile.logoUrl
-    ? 'A real business logo PNG is attached as image input — integrate it naturally as the brand mark wherever the composition allows, preserving its native transparency exactly (no white card, no rounded box, no opaque background behind it); keep it small and refined; never duplicated.'
+    ? 'The actual uploaded business logo image is attached as the first visual input. Place that exact logo once as the brand mark. Preserve its original proportions, colors, typography, transparency, and appearance. Do not stretch, crop, distort, translate, restyle, redraw, recreate, or replace it. Do not invent a second logo and do not render a separate business-name brand mark. Use no white card, rounded box, opaque background, or generated treatment behind it.'
     : `Include a small on-brand brand mark "${name}" placed where the composition allows.`;
   return (
     'Premium Israeli Instagram sponsored advertisement, square 1:1, professional agency-quality design. ' +
@@ -2516,7 +2533,7 @@ async function generateCleanPremiumAdBrief(
             `Topic for this post: ${topic.trim() || 'choose the strongest angle for this business'}\n` +
             (assetCues ? `Cues from uploaded business photos (use these for atmosphere, colors, materials): ${assetCues}\n` : '') +
             `Logo: ${hasLogo
-              ? 'YES — the real business logo PNG is attached as an image input to the image model. Tell the image model to integrate the attached logo PNG as the brand mark at the top of the text panel, preserving its native transparency exactly (no white card, no rounded box, no opaque background behind it), small and refined, never duplicated.'
+              ? 'YES — the actual uploaded business logo image is attached as the first visual input to the image model. Tell the image model to place that exact logo once as the brand mark, preserving its original proportions, colors, typography, transparency, and appearance. It must not stretch, crop, distort, translate, restyle, redraw, recreate, or replace the logo. It must not invent a second logo or render a separate business-name brand mark. Use no white card, rounded box, opaque background, or generated treatment behind it.'
               : 'NO logo uploaded — the brand mark must be the business NAME rendered as small uppercase on-brand typography at the top of the panel.'}\n` +
             (recentLine ? `Avoid repeating recent posts: ${recentLine}\n` : '') +
             '\n' +
@@ -2532,13 +2549,13 @@ async function generateCleanPremiumAdBrief(
             '2. A vivid description of the hero content specific to this business type — what is actually being sold or experienced. Real materials, textures, lighting, atmosphere.\n' +
             '3. Hebrew text: include a bold short HEADLINE (2-5 Hebrew words). A short subheadline, tagline, offer badge or CTA are OPTIONAL — include them only when they genuinely strengthen the design. Do not stuff every element into every poster. Write the EXACT Hebrew words inside double quotes — not placeholders.\n' +
             (hasLogo
-              ? '   a. The attached business LOGO PNG must be integrated naturally as the brand mark wherever the composition allows — preserve its transparency exactly; no white card, no opaque box behind it; small and refined; never duplicated.\n'
+              ? '   a. Place the exact attached business LOGO image once as the brand mark. Preserve its original proportions, colors, typography, transparency, and appearance. Never stretch, crop, distort, translate, restyle, redraw, recreate, or replace it. Never add a second generic logo or a separate business-name brand mark. No white card, opaque box, or generated treatment behind it.\n'
               : `   a. Include a small on-brand brand mark reading "${businessName}" placed where the composition allows.\n`) +
             `4. COLOR PALETTE — derive directly from "Brand colors" above. If the user provided brand colors, USE THEM literally as the poster palette. If not provided, use a palette that fits the business type (suggested direction: ${defaultPaletteHint}). Do NOT default to deep black + purple unless the brand actually calls for it. The whole ad must visually feel like this specific brand.\n` +
             '5. Hebrew text rules: real Hebrew letters (Unicode U+05D0–U+05EA), strict right-to-left order, no broken letters, no Latin substitutions inside Hebrew words.\n' +
             '6. Forbid clause: duplicated text, ghost text, fake prices, fake percentages, fake phone numbers, fake URLs, fake addresses, QR codes.\n' +
             (hasLogo
-              ? '7. Explicitly instruct the image model: "A real business logo PNG is attached as image input — integrate the actual attached logo as the brand mark; preserve its native transparency; never wrap it in a white card or opaque box; never invent a second fake logo."\n'
+              ? '7. Explicitly instruct the image model: "The actual uploaded business logo is attached as the first visual input. Place that exact logo once, unchanged. Preserve its original proportions and appearance. Do not stretch, crop, distort, translate, restyle, redraw, recreate, or replace it. Do not invent a second logo or duplicate the business name."\n'
               : '') +
             `${hasLogo ? '8' : '7'}. End the paragraph with the literal sentence: "Square 1:1, premium agency quality, photorealistic hero, polished typography, brand-driven palette."\n` +
             '\n' +
@@ -2702,6 +2719,10 @@ export const generateMarketingPost = action({
         analyzeBrandAssets(openai, profile, costAcc),
         fetchLogoAsUploadable(profile.logoUrl),
       ]);
+      const generationProfile = withValidatedLogo(
+        profile,
+        logoReferenceClean ? profile.logoUrl : undefined,
+      );
       devInfo('⏱ [timing] brand asset analysis + logo fetch', {
         ms: Date.now() - tAssetsClean,
         logoUrlPresent: Boolean(profile.logoUrl),
@@ -2711,11 +2732,15 @@ export const generateMarketingPost = action({
       const tBriefClean = Date.now();
       const cleanBrief = await generateCleanPremiumAdBrief(
         openai,
-        profile,
+        generationProfile,
         cleanTopic,
         assetInsightClean,
         recentPostSummaries,
         costAcc,
+      );
+      const cleanImagePrompt = applyValidatedLogoInstruction(
+        cleanBrief.imagePrompt,
+        Boolean(logoReferenceClean),
       );
       devInfo('⏱ [timing] clean brief', { ms: Date.now() - tBriefClean });
 
@@ -2743,14 +2768,14 @@ export const generateMarketingPost = action({
         brandColorsProvided: Boolean(profile.brandColors?.trim()),
         brandColors: profile.brandColors?.trim() || null,
         styleReferenceFileIsNull: true,
-        imagePromptLength: cleanBrief.imagePrompt.length,
-        imagePromptPreviewFirst300: cleanBrief.imagePrompt.slice(0, 300),
+        imagePromptLength: cleanImagePrompt.length,
+        imagePromptPreviewFirst300: cleanImagePrompt.slice(0, 300),
         captionLength: cleanCaptionText.length,
         hashtagCount: cleanBrief.hashtags.length,
       });
 
       devInfo('🖼 [CLEAN premium_ad] image request', {
-        promptLength: cleanBrief.imagePrompt.length,
+        promptLength: cleanImagePrompt.length,
         defaultModel: BEST_OPENAI_IMAGE_MODEL,
         configuredModel: process.env.OPENAI_IMAGE_MODEL?.trim() || null,
       });
@@ -2758,7 +2783,7 @@ export const generateMarketingPost = action({
       const tImageClean = Date.now();
       const cleanImageBase64 = await generateImageWithOpenAI({
         openai,
-        prompt: cleanBrief.imagePrompt,
+        prompt: cleanImagePrompt,
         role: 'complete_poster',
         languageMode: 'hebrew',
         logoFile: _logoFileForCall,
@@ -2867,6 +2892,11 @@ export const generateMarketingPost = action({
     const brandAssetUrls = collectBrandAssetUrls(profile);
     const tAssets = Date.now();
     const assetInsight    = await analyzeBrandAssets(openai, profile, costAcc);
+    const logoReference = await logoPromise;
+    const generationProfile = withValidatedLogo(
+      profile,
+      logoReference ? profile.logoUrl : undefined,
+    );
     devInfo('⏱ [timing] brand asset analysis', { ms: Date.now() - tAssets });
     const posterLanguageMode = resolvePosterLanguageMode();
     // ── PROFILE / ROUTING DIAGNOSTIC ─────────────────────────────────────────
@@ -2954,7 +2984,7 @@ export const generateMarketingPost = action({
     const tBrief = Date.now();
     const brief = await generateMarketingBrief(
       openai,
-      profile,
+      generationProfile,
       cleanTopic,
       postGoal,
       assetInsight,
@@ -2991,7 +3021,7 @@ export const generateMarketingPost = action({
     const maxPosterTextElements = getMaxPosterTextElements(postImageType);
     const approvedPosterTextElements = textElementsFromMarketingBrief(
       brief,
-      profile,
+      generationProfile,
       effectiveImageTextMode,
       maxPosterTextElements,
     );
@@ -3043,14 +3073,13 @@ export const generateMarketingPost = action({
     }
 
     // ── 3. Build image prompt + generate ────────────────────────────────────
-    const logoReference = await logoPromise;
     devInfo('🔖 Image references (legacy designed/photo)', {
       present: Boolean(profile.logoUrl),
       logoFetched: Boolean(logoReference),
     });
 
     const imagePrompt = buildSimpleImagePrompt({
-      profile,
+      profile: generationProfile,
       brief,
       approvedTextElements: approvedPosterTextElements,
       assetInsight,
